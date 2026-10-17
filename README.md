@@ -28,15 +28,16 @@ Requirements: Linux, [uv](https://docs.astral.sh/uv/) 0.13.1 (enforced by
 ```bash
 uv sync --locked                                  # project environment
 uv sync --locked --project tools                  # provenance scanner environment
-uv run --locked pre-commit install                # hooks run on every commit
+uv run --locked pre-commit install                # hooks run on every commit and push
 uv run --locked ruff check . && uv run --locked ruff format --check .
 uv run --locked mypy && uv run --locked lint-imports
 uv run --locked pytest -q
 uv build --no-sources
 ```
 
-Every commit passes the provenance gate (SCANOSS and ScanCode,
-[ADR 0007](docs/adr/0007-provenance-controls.md)).
+Every commit and every push passes the provenance gate (SCANOSS and ScanCode);
+CI repeats the ScanCode checks on every file
+([ADR 0013](docs/adr/0013-provenance-matching-at-push.md)).
 
 ## Layout
 
