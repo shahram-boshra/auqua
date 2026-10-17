@@ -24,5 +24,6 @@ Every change reaches `main` only through a pull request whose checks pass:
 - Tests: `pytest`; new behaviour comes with tests.
 - Licensing metadata: every file carries `SPDX-FileCopyrightText` and
   `SPDX-License-Identifier` (REUSE).
-- Provenance: the SCANOSS and ScanCode gate passes; flagged code is rewritten,
-  never declared away ([ADR 0007](docs/adr/0007-provenance-controls.md)).
+- Provenance: the SCANOSS and ScanCode gate passes at commit and push; flagged
+  code is rewritten, never declared away
+  ([ADR 0013](docs/adr/0013-provenance-matching-at-push.md)).

@@ -4,16 +4,23 @@
 # Hook repositories are pinned to commit SHAs (ADR 0012). Local hooks run the
 # tools from the locked uv environments, so local results equal CI results.
 minimum_pre_commit_version: "4.7.0"
-default_install_hook_types: [pre-commit]
+default_install_hook_types: [pre-commit, pre-push]
+# Every hook runs at commit only, except provenance-push (decision log a10).
+# Hooks whose upstream manifest declares pre-push repeat the stage explicitly,
+# because default_stages applies only to hooks that declare no stages.
+default_stages: [pre-commit]
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
     hooks:
       - id: trailing-whitespace
+        stages: [pre-commit]
       - id: end-of-file-fixer
+        stages: [pre-commit]
       - id: check-yaml
       - id: check-toml
       - id: check-added-large-files
+        stages: [pre-commit]
       - id: check-merge-conflict
       - id: debug-statements
   - repo: local
@@ -41,9 +48,19 @@ repos:
         pass_filenames: false
         always_run: true
       - id: provenance-scan
-        name: provenance (SCANOSS + ScanCode, ADR 0007)
+        name: provenance (SCANOSS + ScanCode, ADR 0013)
         entry: uv run --project tools --locked python tools/provenance_scan.py --staged
         language: system
         pass_filenames: false
         always_run: true
         require_serial: true
+      # SCANOSS cannot run in CI (OSSKB rate-limits GitHub-hosted runners), so
+      # every push is matched here, fail-closed (decision log a10).
+      - id: provenance-push
+        name: provenance of pushed commits (SCANOSS + ScanCode, ADR 0013)
+        entry: uv run --project tools --locked python tools/provenance_scan.py --pushed
+        language: system
+        pass_filenames: false
+        always_run: true
+        require_serial: true
+        stages: [pre-push]

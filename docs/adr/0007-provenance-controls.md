@@ -9,7 +9,7 @@ Date: 2026-10-16
 
 ## Status
 
-Accepted
+Superseded by [0013](0013-provenance-matching-at-push.md)
 
 ## Context
 
