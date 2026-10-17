@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: 2026 Asadollah Boshra
+# SPDX-License-Identifier: MIT
+
+name: Supply chain
+on:
+  pull_request:
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "tools/pyproject.toml"
+      - "tools/uv.lock"
+      - "compliance/**"
+      - ".github/workflows/**"
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1"
+permissions:
+  contents: read
+jobs:
+  supply-chain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+      # Licence gate on the runtime environment (no development group).
+      - run: uv sync --locked --no-dev
+      - run: uv run --locked --no-dev python tools/license_policy.py --scope runtime
+      # Full inventory: project with development group, and the scanner environment.
+      - run: uv sync --locked
+      - run: uv run --locked python tools/license_policy.py --scope development
+      - run: uv sync --locked --project tools
+      - run: uv run --locked --project tools python tools/license_policy.py --scope development
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c  # v0.24.3
+        with:
+          path: "."
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: true
+          upload-release-assets: false
+      - uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
+        with:
+          sbom: sbom.spdx.json
+          severity-cutoff: high
+          fail-build: true
+          output-format: table
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0 (post-incident release, GHSA-69fq-xp46-6x23)
+        with:
+          scan-type: fs
+          scan-ref: "."
+          scanners: vuln,secret
+          skip-dirs: ".venv,tools/.venv"
+          severity: HIGH,CRITICAL
+          exit-code: "1"

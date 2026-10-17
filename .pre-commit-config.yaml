@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: 2026 Asadollah Boshra
+# SPDX-License-Identifier: MIT
+
+# Hook repositories are pinned to commit SHAs (ADR 0012). Local hooks run the
+# tools from the locked uv environments, so local results equal CI results.
+minimum_pre_commit_version: "4.7.0"
+default_install_hook_types: [pre-commit]
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: debug-statements
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --locked ruff check --force-exclude
+        language: system
+        types_or: [python, pyi]
+      - id: ruff-format
+        name: ruff format (check)
+        entry: uv run --locked ruff format --check --force-exclude
+        language: system
+        types_or: [python, pyi]
+      - id: detect-secrets
+        name: detect-secrets
+        entry: uv run --locked detect-secrets-hook --baseline .secrets.baseline
+        language: system
+        # Lock files hold package hashes; this file holds public commit SHAs.
+        exclude: ^(uv\.lock|tools/uv\.lock|\.pre-commit-config\.yaml)$
+      - id: reuse-lint
+        name: REUSE lint
+        entry: uv run --locked reuse lint
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: provenance-scan
+        name: provenance (SCANOSS + ScanCode, ADR 0007)
+        entry: uv run --project tools --locked python tools/provenance_scan.py --staged
+        language: system
+        pass_filenames: false
+        always_run: true
+        require_serial: true

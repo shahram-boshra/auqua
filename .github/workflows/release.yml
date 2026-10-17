@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: 2026 Asadollah Boshra
+# SPDX-License-Identifier: MIT
+
+name: Release
+on:
+  push:
+    tags: ["v*.*.*"]
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write           # create the Release and upload its assets
+      id-token: write           # build-provenance attestation: signing certificate
+      attestations: write       # build-provenance attestation: store the attestation
+      artifact-metadata: write  # build-provenance attestation: artifact storage record
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+        with:
+          enable-cache: false
+      - run: uv sync --locked
+      - run: uv run --locked pytest -q
+      - run: uv build --no-sources
+      - name: Tag matches the package version
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          test "$(uv version --short)" = "$V"
+          test -f "dist/auqua-$V-py3-none-any.whl" && test -f "dist/auqua-$V.tar.gz"
+      - name: Wheel installs and imports outside the project
+        run: uv run --no-project --with "dist/auqua-${GITHUB_REF_NAME#v}-py3-none-any.whl" -- python -c "import auqua"
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-path: "dist/auqua-*"
+      - name: Runtime licence report
+        run: |
+          uv sync --locked --no-dev
+          uv run --locked --no-dev python tools/license_policy.py --scope runtime > "dist/auqua-${GITHUB_REF_NAME}.licenses.txt"
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c  # v0.24.3
+        with:
+          path: ".venv"
+          format: spdx-json
+          output-file: dist/auqua-${{ github.ref_name }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
+        with:
+          sbom: dist/auqua-${{ github.ref_name }}.spdx.json
+          severity-cutoff: high
+          fail-build: true
+          output-format: json
+          output-file: dist/auqua-${{ github.ref_name }}.grype.json
+      - run: cd dist && sha256sum auqua-* > SHA256SUMS
+      - name: Release notes from CHANGELOG.md
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          awk -v v="$V" 'index($0, "## [" v "]")==1 {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > notes.md
+          test -s notes.md
+      - run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "auqua $GITHUB_REF_NAME" --notes-file notes.md dist/*
+        env:
+          GH_TOKEN: ${{ github.token }}

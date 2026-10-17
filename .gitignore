@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Asadollah Boshra
+# SPDX-License-Identifier: MIT
+
+# Environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.import_linter_cache/
+
+# Build output
+build/
+dist/
+*.egg-info/
+
+# Scanner output
+.scanoss/
+scanoss-raw.json
+
+# Market data and model artefacts never enter Git
+/data/

@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Asadollah Boshra
+# SPDX-License-Identifier: MIT
+
+# Locked environment for the provenance scanners (decision log a0 D1-D4).
+# Kept separate from the auqua environment so scanner dependencies never
+# constrain or enter the platform's own dependency graph.
+
+[project]
+name = "auqua-provenance-tools"
+version = "0"
+requires-python = ">=3.14"
+dependencies = [
+    "scancode-toolkit==32.5.0",
+    "scanoss==1.54.2",
+]
+
+[tool.uv]
+package = false
+required-version = "==0.13.1"
+# scancode-toolkit 32.5.0 fails at start-up with pluggy 1.7.0
+# ("did not find any 'pre_scan' hooks"); verified working with pluggy 1.6.0.
+# Remove when a ScanCode release works with pluggy >= 1.7.
+constraint-dependencies = ["pluggy<1.7"]

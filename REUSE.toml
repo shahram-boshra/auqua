@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Asadollah Boshra
+# SPDX-License-Identifier: MIT
+
+version = 1
+
+# Files that cannot carry a comment header.
+[[annotations]]
+path = [
+    ".python-version",
+    ".secrets.baseline",
+    "src/auqua/py.typed",
+    "tools/uv.lock",
+    "uv.lock",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Asadollah Boshra"
+SPDX-License-Identifier = "MIT"

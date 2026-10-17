@@ -1,0 +1,101 @@
+# SPDX-FileCopyrightText: 2026 Asadollah Boshra
+# SPDX-License-Identifier: MIT
+
+[project]
+name = "auqua"
+version = "0.1.0"
+description = "Open-core, low-frequency multi-asset quantitative trading platform."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Asadollah Boshra" }]
+classifiers = [
+    "Private :: Do Not Upload",
+    "Development Status :: 2 - Pre-Alpha",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/shahram-boshra/auqua"
+
+[dependency-groups]
+dev = [
+    "detect-secrets>=1.5.0",
+    "import-linter>=2.15",
+    "mypy>=2.4.0",
+    "pre-commit>=4.7.0",
+    "pytest>=9.1.1",
+    "reuse>=6.2.0",
+    "ruff>=0.17.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv]
+required-version = "==0.13.1"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["src", "tests", "tools"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF", "S", "PT", "N", "C4", "PTH", "DTZ", "T20", "ERA", "D", "ANN", "PL"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+known-first-party = ["auqua", "tools"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+warn_unreachable = true
+files = ["src", "tests", "tools"]
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+xfail_strict = true
+filterwarnings = ["error"]
+
+[tool.importlinter]
+root_package = "auqua"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "The public platform never imports the private Alpha engine (ADR 0003)"
+type = "forbidden"
+source_modules = ["auqua"]
+forbidden_modules = ["auqua_alpha"]
+
+[[tool.importlinter.contracts]]
+name = "Shared contracts and the clock import no other auqua subpackage (BP0 B4.2)"
+type = "forbidden"
+source_modules = ["auqua.contracts", "auqua.clock"]
+forbidden_modules = [
+    "auqua.alpha",
+    "auqua.analytics",
+    "auqua.config",
+    "auqua.execution",
+    "auqua.ingestion",
+    "auqua.operations",
+    "auqua.portfolio",
+    "auqua.risk",
+    "auqua.storage",
+    "auqua.telemetry",
+    "auqua.visualization",
+]

@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 Asadollah Boshra
+# SPDX-License-Identifier: MIT
+
+# Licence policy (Strategy section 18; BP0 B7.4; ADR 0012).
+# Patterns use fnmatch syntax on SPDX identifiers. Deny takes precedence.
+
+# First-party files: licences and copyright holders accepted by the
+# provenance gate (tools/provenance_scan.py, decision log a0 D1).
+[first_party]
+licenses = ["MIT"]
+holders = ["Asadollah Boshra"]
+
+# Dependencies required by auqua at runtime: gate (tools/license_policy.py).
+[runtime]
+allow = ["MIT", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0", "ISC", "PSF-2.0", "Zlib"]
+review = ["MPL-2.0", "LGPL-2.1-or-later", "LGPL-3.0-or-later", "EPL-2.0"]
+deny = ["GPL-*", "AGPL-*", "SSPL-1.0", "LicenseRef-*Commons-Clause*"]
+# Recorded human decisions for review or unknown cases, one per package version:
+# [[runtime.approvals]]
+# package = "<name>"
+# version = "<version>"
+# expression = "<SPDX expression exactly as in the metadata>"
+
+# Development group and scanner environment: report only. Tools are run
+# unmodified and never distributed (decision log a7, L-1).
+[development]
+allow = ["MIT", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0", "ISC", "PSF-2.0", "Zlib"]
+review = ["MPL-2.0", "LGPL-2.1-or-later", "LGPL-3.0-or-later", "EPL-2.0"]
+deny = ["GPL-*", "AGPL-*", "SSPL-1.0", "LicenseRef-*Commons-Clause*"]
