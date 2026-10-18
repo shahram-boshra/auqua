@@ -33,7 +33,9 @@ from auqua.config.errors import (
 from auqua.config.identity import config_id
 from auqua.config.loader import LoadedConfig, load
 from auqua.config.migrate import Migrations
+from auqua.config.root import CONFIG_MIGRATIONS
 from auqua.config.secret_files import SecretsDirectory
+from auqua.config.storage import StorageConfig
 
 PRIVATE_DIR = 0o700
 PRIVATE_FILE = 0o600
@@ -256,9 +258,27 @@ def test_migrations() -> None:
 
 def test_future_config_version_refused(roots: Roots) -> None:
     """A configuration newer than the code is refused (Y8)."""
-    _write(roots.config / "paper" / "config.toml", CONFIG.format(env="paper").replace("= 1", "= 2"))
+    _write(roots.config / "paper" / "config.toml", CONFIG.format(env="paper").replace("= 1", "= 3"))
     with pytest.raises(UnsupportedVersionError):
         _load(roots)
+
+
+def test_config_version_1_migrates_to_storage_defaults(roots: Roots) -> None:
+    """Version 1 has no ``storage`` section; it migrates to version 2 with defaults (BP3 Z15)."""
+    migrated = _load(roots).config
+    assert migrated.schema_version == CONFIG_MIGRATIONS.current
+    assert migrated.storage == StorageConfig()
+    explicit = CONFIG.format(env="paper").replace("= 1", "= 2") + (
+        "\n[storage]\nbuffer_rows = 1000\nduckdb_memory_mib = 512\n"
+    )
+    _write(roots.config / "paper" / "config.toml", explicit)
+    storage = _load(roots).config.storage
+    assert (storage.buffer_rows, storage.duckdb_memory_mib) == (1000, 512)
+    assert storage.rows_per_group == StorageConfig().rows_per_group
+    for bad in ("rows_per_file = 0", "duckdb_threads = 1.5", "unknown = 1"):
+        _write(roots.config / "paper" / "config.toml", explicit + bad + "\n")
+        with pytest.raises(ConfigValidationError):
+            _load(roots)
 
 
 @pytest.mark.parametrize("file_name", ["config.toml", "risk_limits.toml"])

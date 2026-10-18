@@ -18,7 +18,12 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Typing :: Typed",
 ]
-dependencies = ["msgspec>=0.22.0", "pydantic>=2.14.1"]
+dependencies = [
+    "duckdb>=1.5.6",
+    "msgspec>=0.22.0",
+    "pyarrow>=26.0.0",
+    "pydantic>=2.14.1",
+]
 
 [project.urls]
 Repository = "https://github.com/shahram-boshra/auqua"
@@ -76,6 +81,12 @@ warn_unreachable = true
 files = ["src", "tests", "tools"]
 plugins = ["pydantic.mypy"]
 
+# pyarrow 26.0.0 ships no type information (no py.typed, no stubs); its values
+# are typed at the auqua.storage boundary (ADR 0022).
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
+ignore_missing_imports = true
+
 [tool.pydantic-mypy]
 init_forbid_extra = true
 init_typed = true
@@ -116,3 +127,25 @@ forbidden_modules = [
     "auqua.telemetry",
     "auqua.visualization",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Configuration and storage import no component above them (BP3 section 4)"
+type = "forbidden"
+source_modules = ["auqua.config", "auqua.storage"]
+forbidden_modules = [
+    "auqua.alpha",
+    "auqua.analytics",
+    "auqua.execution",
+    "auqua.ingestion",
+    "auqua.operations",
+    "auqua.portfolio",
+    "auqua.risk",
+    "auqua.telemetry",
+    "auqua.visualization",
+]
+
+[[tool.importlinter.contracts]]
+name = "Configuration does not import storage (BP3 section 4)"
+type = "forbidden"
+source_modules = ["auqua.config"]
+forbidden_modules = ["auqua.storage"]

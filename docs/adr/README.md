@@ -29,3 +29,7 @@ Format: Michael Nygard (title, status, context, decision, consequences). Numbers
 | [0018](0018-configuration-loading-and-precedence.md) | Configuration loading and precedence | Accepted |
 | [0019](0019-secrets-and-risk-limits.md) | Secrets and risk limits | Accepted |
 | [0020](0020-configuration-identity-versioning-and-environments.md) | Configuration identity, versioning and environments | Accepted |
+| [0021](0021-event-log.md) | Event log | Accepted |
+| [0022](0022-analytical-datasets-and-query-engine.md) | Analytical datasets and query engine | Accepted |
+| [0023](0023-transactional-store-and-point-in-time-reference-data.md) | Transactional store and point-in-time reference data | Accepted |
+| [0024](0024-concluded-licence-for-dependencies-without-a-declared-expression.md) | Concluded licence for dependencies without a declared expression | Accepted |

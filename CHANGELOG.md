@@ -30,6 +30,17 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   permission-checked files, a separate hashed risk-limits file, configuration
   identity, schema migrations and five isolated environments (ADRs
   0018-0020). Runtime dependency `pydantic`; mypy runs the Pydantic plugin.
+- Storage and event log (BP3): a durable, hash-chained SQLite event log with
+  one writer, duplicate and conflict handling and verified replay; Parquet
+  datasets with fixed column types, manifests and compaction; a sandboxed
+  read-only DuckDB query session; scaled-integer decimals and migrations for
+  the transactional store; a point-in-time index of instrument versions and the
+  `reference.instrument.v1` event (ADRs 0021-0023). Runtime dependencies
+  `pyarrow` and `duckdb`; configuration schema version 2 adds the `storage`
+  section.
+- The runtime licence gate accepts a dependency without a declared licence
+  expression only through a recorded concluded licence bound to its version and
+  licence-file hashes (ADR 0024).
 
 ### Changed
 

@@ -24,6 +24,7 @@ from auqua.contracts.events import (
     FundingPayment,
     FuturesExpiry,
     FxSettlement,
+    InstrumentDefined,
     OptionAssignment,
     OptionExercise,
     OptionExpiry,
@@ -34,7 +35,7 @@ from auqua.contracts.events.base import Event, LogRecord
 from auqua.contracts.events.lifecycle import CorporateActionKind
 from auqua.contracts.events.market import Aggressor
 from auqua.contracts.identity import InstrumentId, new_id
-from auqua.contracts.instruments import Settlement
+from auqua.contracts.instruments import CryptoSpot, Identifiers, Settlement
 
 SNAPSHOT = Path(__file__).parent / "snapshots" / "canonical_events.schema.json"
 BTC = InstrumentId("BINANCE", "BTCUSDT")
@@ -162,7 +163,28 @@ def _examples() -> list[Event]:
             amount_per_unit=Decimal("2.125"),
             currency="USD",
         ),
+        InstrumentDefined(**_common(new_id()), instrument=_crypto_spot(knowledge_ns=T0)),
     ]
+
+
+def _crypto_spot(knowledge_ns: int) -> CryptoSpot:
+    return CryptoSpot(
+        id=BTC,
+        quote_currency="USDT",
+        price_increment=Decimal("0.01"),
+        quantity_increment=Decimal("0.00001"),
+        multiplier=Decimal(1),
+        valid_from_ns=T0,
+        knowledge_ns=knowledge_ns,
+        identifiers=Identifiers(),
+        base_currency="BTC",
+    )
+
+
+def test_instrument_defined_refuses_later_knowledge() -> None:
+    """A version cannot be known after the platform observed it (BP3 Z13)."""
+    with pytest.raises(InvalidFieldError, match="knowledge_ns"):
+        InstrumentDefined(**_common(new_id()), instrument=_crypto_spot(knowledge_ns=T0 + 2))
 
 
 def test_every_canonical_type_has_an_example() -> None:

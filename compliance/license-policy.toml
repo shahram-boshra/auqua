@@ -21,6 +21,26 @@ deny = ["GPL-*", "AGPL-*", "SSPL-1.0", "LicenseRef-*Commons-Clause*"]
 # version = "<version>"
 # expression = "<SPDX expression exactly as in the metadata>"
 
+# Concluded licences for package versions that declare no License-Expression
+# (SPDX declared licence NOASSERTION; ADR 0024). Valid only while every listed
+# licence file is installed unchanged; a new version needs a new record.
+[[runtime.concluded]]
+package = "duckdb"
+version = "1.5.6"
+declared = "NOASSERTION"
+concluded = "MIT AND Apache-2.0 AND BSD-2-Clause AND BSD-3-Clause AND BSL-1.0 AND ICU AND Zlib"
+basis = """\
+Wheel duckdb-1.5.6-cp314 inspected 2026-10-18: dist-info/licenses/LICENSE is \
+MIT (Stichting DuckDB Foundation); ScanCode over the wheel: Apache-2.0 \
+(experimental/spark, adbc_driver_duckdb), BSD-3-Clause (bytes_io_wrapper), ICU \
+data notice in the extension binary; other binary matches were dictionary text \
+(brotli). Debian copyright file for duckdb 1.5.5 (DFSG review): bundled \
+components under Expat (MIT), Apache-2.0, BSD-2-Clause, BSD-3-Clause, \
+BSL-1.0, ICU and Zlib; mbedtls is Apache-2.0 OR GPL-2.0-or-later, used under \
+Apache-2.0; gram.hpp carries the Bison special exception. Decision log a17."""
+# The value is the SHA-256 of a public licence file, not a secret.
+license_files = { "duckdb-1.5.6.dist-info/licenses/LICENSE" = "075c33400ffcb0c586dd106a029d3e733e9da3693f8fcb9cebfc651c8a2f14e3" }  # pragma: allowlist secret
+
 # Development group and scanner environment: report only. Tools are run
 # unmodified and never distributed (decision log a7, L-1).
 [development]
