@@ -25,6 +25,11 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   export (ADRs 0014-0017). Runtime dependency `msgspec`; development
   dependency `hypothesis`. Wall-clock calls outside ingestion fail the lint
   gate (ruff TID251).
+- Configuration (BP2): TOML files with exact decimals, immutable strict
+  Pydantic models, `AUQUA_` overrides for marked fields only, secrets from
+  permission-checked files, a separate hashed risk-limits file, configuration
+  identity, schema migrations and five isolated environments (ADRs
+  0018-0020). Runtime dependency `pydantic`; mypy runs the Pydantic plugin.
 
 ### Changed
 
