@@ -22,3 +22,7 @@ Format: Michael Nygard (title, status, context, decision, consequences). Numbers
 | [0011](0011-single-package-src-layout.md) | One distribution and import package in the src layout | Accepted |
 | [0012](0012-gate-toolchain-and-licence-policy.md) | Gate toolchain and licence policy | Accepted |
 | [0013](0013-provenance-matching-at-push.md) | Provenance matching at commit and push; ScanCode in CI | Accepted |
+| [0014](0014-canonical-events-with-msgspec.md) | Canonical events with msgspec | Accepted |
+| [0015](0015-identifiers-and-time-representation.md) | Identifiers and time representation | Accepted |
+| [0016](0016-in-memory-decimal-representation.md) | In-memory decimal representation | Accepted |
+| [0017](0017-instrument-model-and-cdm-alignment.md) | Instrument model and CDM alignment | Accepted |

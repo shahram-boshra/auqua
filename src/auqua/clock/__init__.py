@@ -4,6 +4,6 @@
 
 The injected clock driven by the sequenced event log (ADR 0009).
 
-Owned by BP1, Core Domain Contracts. Modules are added by that Blueprint's
-implementation slice.
+Owned by BP1, Core Domain Contracts. Modules: ``base`` (the ``Clock``
+protocol), ``log`` (``LogClock``), ``wall`` (``WallClock``, ingestion only).
 """

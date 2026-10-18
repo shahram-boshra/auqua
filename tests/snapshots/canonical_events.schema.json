@@ -1,0 +1,707 @@
+{
+  "$defs": {
+    "Aggressor": {
+      "description": "Side that initiated a trade, when the venue reports it.",
+      "enum": [
+        "buy",
+        "sell"
+      ],
+      "title": "Aggressor"
+    },
+    "Bar": {
+      "additionalProperties": false,
+      "description": "Aggregated bar over ``[start_ns, start_ns + interval_ns)``.\n\n``ts_event_ns`` is the end of the interval, when the bar became complete.",
+      "properties": {
+        "close": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "high": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "interval_ns": {
+          "type": "integer"
+        },
+        "low": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "open": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "start_ns": {
+          "type": "integer"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "market.bar.v1"
+          ]
+        },
+        "volume": {
+          "format": "decimal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "instrument_id",
+        "start_ns",
+        "interval_ns",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+      ],
+      "title": "Bar",
+      "type": "object"
+    },
+    "CorporateAction": {
+      "additionalProperties": false,
+      "description": "Corporate action.\n\nCDM reference: ``reset`` / ``split`` / ``termsChange``; intent\n``CorporateActionAdjustment``. ``ts_event_ns`` is the announcement;\n``effective_ns`` is when it applies. ``ratio`` is new units per old unit\n(split: 2 for 2-for-1; reverse split: 0.5; stock dividend: additional units\nper unit held).",
+      "properties": {
+        "cash_amount": {
+          "anyOf": [
+            {
+              "format": "decimal",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "effective_ns": {
+          "type": "integer"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "kind": {
+          "$ref": "#/$defs/CorporateActionKind"
+        },
+        "new_instrument_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstrumentId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ratio": {
+          "anyOf": [
+            {
+              "format": "decimal",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "lifecycle.corporate_action.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "instrument_id",
+        "kind",
+        "effective_ns"
+      ],
+      "title": "CorporateAction",
+      "type": "object"
+    },
+    "CorporateActionKind": {
+      "description": "Corporate actions handled in phase 1.",
+      "enum": [
+        "cash_dividend",
+        "delisting",
+        "split",
+        "stock_dividend",
+        "symbol_change"
+      ],
+      "title": "CorporateActionKind"
+    },
+    "CouponPayment": {
+      "additionalProperties": false,
+      "description": "Bond coupon paid per unit of face value held (CDM: ``transfer``; intent ``CashFlow``).",
+      "properties": {
+        "amount_per_unit": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "payment_ns": {
+          "type": "integer"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "lifecycle.coupon_payment.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "instrument_id",
+        "payment_ns",
+        "amount_per_unit",
+        "currency"
+      ],
+      "title": "CouponPayment",
+      "type": "object"
+    },
+    "FundingPayment": {
+      "additionalProperties": false,
+      "description": "Perpetual-swap funding at ``ts_event_ns`` (CDM: ``transfer``; intent ``CashFlow``).\n\nPositive ``funding_rate``: longs pay shorts.",
+      "properties": {
+        "funding_rate": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "mark_price": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "lifecycle.funding_payment.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "instrument_id",
+        "funding_rate",
+        "mark_price"
+      ],
+      "title": "FundingPayment",
+      "type": "object"
+    },
+    "FuturesExpiry": {
+      "additionalProperties": false,
+      "description": "Final settlement of a future (CDM: ``transfer``, cash or deliverable).",
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "settlement": {
+          "$ref": "#/$defs/Settlement"
+        },
+        "settlement_price": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "lifecycle.futures_expiry.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "instrument_id",
+        "settlement",
+        "settlement_price"
+      ],
+      "title": "FuturesExpiry",
+      "type": "object"
+    },
+    "FxSettlement": {
+      "additionalProperties": false,
+      "description": "Exchange of the two currency amounts on the value date (CDM: ``transfer``).",
+      "properties": {
+        "base_amount": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "quote_amount": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "lifecycle.fx_settlement.v1"
+          ]
+        },
+        "value_date_ns": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "instrument_id",
+        "value_date_ns",
+        "base_amount",
+        "quote_amount"
+      ],
+      "title": "FxSettlement",
+      "type": "object"
+    },
+    "InstrumentId": {
+      "additionalProperties": false,
+      "description": "Stable internal instrument identifier: a venue and the venue's symbol.\n\nA symbol change creates a new identifier linked by a lifecycle event; an\nidentifier is never renamed in place.",
+      "properties": {
+        "symbol": {
+          "type": "string"
+        },
+        "venue": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "venue",
+        "symbol"
+      ],
+      "title": "InstrumentId",
+      "type": "object"
+    },
+    "OptionAssignment": {
+      "additionalProperties": false,
+      "description": "Assignment to the writer: the counterparty side of an exercise (CDM: ``exercise``).",
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "quantity": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "lifecycle.option_assignment.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "instrument_id",
+        "quantity"
+      ],
+      "title": "OptionAssignment",
+      "type": "object"
+    },
+    "OptionExercise": {
+      "additionalProperties": false,
+      "description": "Exercise of option contracts by the holder (CDM: ``exercise``; intent ``OptionExercise``).",
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "quantity": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "lifecycle.option_exercise.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "instrument_id",
+        "quantity"
+      ],
+      "title": "OptionExercise",
+      "type": "object"
+    },
+    "OptionExpiry": {
+      "additionalProperties": false,
+      "description": "Expiry of option contracts; ``underlying_price`` decides moneyness (CDM: ``exercise``).",
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "lifecycle.option_expiry.v1"
+          ]
+        },
+        "underlying_price": {
+          "format": "decimal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "instrument_id",
+        "underlying_price"
+      ],
+      "title": "OptionExpiry",
+      "type": "object"
+    },
+    "Quote": {
+      "additionalProperties": false,
+      "description": "Best bid and offer.",
+      "properties": {
+        "ask_price": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "ask_size": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "bid_price": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "bid_size": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "market.quote.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "instrument_id",
+        "bid_price",
+        "bid_size",
+        "ask_price",
+        "ask_size"
+      ],
+      "title": "Quote",
+      "type": "object"
+    },
+    "Settlement": {
+      "description": "Settlement of a derivative at expiry or exercise.",
+      "enum": [
+        "cash",
+        "physical"
+      ],
+      "title": "Settlement"
+    },
+    "Trade": {
+      "additionalProperties": false,
+      "description": "One trade print.",
+      "properties": {
+        "aggressor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Aggressor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "price": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "quantity": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "market.trade.v1"
+          ]
+        },
+        "venue_trade_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "instrument_id",
+        "price",
+        "quantity"
+      ],
+      "title": "Trade",
+      "type": "object"
+    }
+  },
+  "anyOf": [
+    {
+      "$ref": "#/$defs/Bar"
+    },
+    {
+      "$ref": "#/$defs/CorporateAction"
+    },
+    {
+      "$ref": "#/$defs/CouponPayment"
+    },
+    {
+      "$ref": "#/$defs/FundingPayment"
+    },
+    {
+      "$ref": "#/$defs/FuturesExpiry"
+    },
+    {
+      "$ref": "#/$defs/FxSettlement"
+    },
+    {
+      "$ref": "#/$defs/OptionAssignment"
+    },
+    {
+      "$ref": "#/$defs/OptionExercise"
+    },
+    {
+      "$ref": "#/$defs/OptionExpiry"
+    },
+    {
+      "$ref": "#/$defs/Quote"
+    },
+    {
+      "$ref": "#/$defs/Trade"
+    }
+  ],
+  "discriminator": {
+    "mapping": {
+      "lifecycle.corporate_action.v1": "#/$defs/CorporateAction",
+      "lifecycle.coupon_payment.v1": "#/$defs/CouponPayment",
+      "lifecycle.funding_payment.v1": "#/$defs/FundingPayment",
+      "lifecycle.futures_expiry.v1": "#/$defs/FuturesExpiry",
+      "lifecycle.fx_settlement.v1": "#/$defs/FxSettlement",
+      "lifecycle.option_assignment.v1": "#/$defs/OptionAssignment",
+      "lifecycle.option_exercise.v1": "#/$defs/OptionExercise",
+      "lifecycle.option_expiry.v1": "#/$defs/OptionExpiry",
+      "market.bar.v1": "#/$defs/Bar",
+      "market.quote.v1": "#/$defs/Quote",
+      "market.trade.v1": "#/$defs/Trade"
+    },
+    "propertyName": "type"
+  }
+}

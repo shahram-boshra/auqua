@@ -9,6 +9,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .import_linter_cache/
+.hypothesis/
 
 # Build output
 build/
