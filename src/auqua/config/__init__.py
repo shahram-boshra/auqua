@@ -6,5 +6,5 @@ The typed, validated configuration boundary.
 
 Owned by BP2, Configuration. Modules: ``base``, ``tomlfile``, ``overrides``,
 ``secret_files``, ``identity``, ``migrate``, ``root``, ``loader``, ``errors``
-(ADRs 0018-0020).
+(ADRs 0018-0020); ``storage`` holds the section owned by BP3 (ADRs 0021-0022).
 """

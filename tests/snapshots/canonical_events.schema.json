@@ -78,6 +78,94 @@
       "title": "Bar",
       "type": "object"
     },
+    "Bond": {
+      "additionalProperties": false,
+      "description": "Fixed-rate bond; ``coupon_frequency`` 0 means zero-coupon.",
+      "properties": {
+        "coupon_frequency": {
+          "type": "integer"
+        },
+        "coupon_rate": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "day_count": {
+          "$ref": "#/$defs/DayCount"
+        },
+        "face_value": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "first_coupon_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "identifiers": {
+          "$ref": "#/$defs/Identifiers"
+        },
+        "issue_ns": {
+          "type": "integer"
+        },
+        "knowledge_ns": {
+          "type": "integer"
+        },
+        "maturity_ns": {
+          "type": "integer"
+        },
+        "multiplier": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "price_increment": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "quantity_increment": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "quote_currency": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "instrument.bond.v1"
+          ]
+        },
+        "valid_from_ns": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "quote_currency",
+        "price_increment",
+        "quantity_increment",
+        "multiplier",
+        "valid_from_ns",
+        "knowledge_ns",
+        "identifiers",
+        "face_value",
+        "coupon_rate",
+        "coupon_frequency",
+        "day_count",
+        "issue_ns",
+        "maturity_ns"
+      ],
+      "title": "Bond",
+      "type": "object"
+    },
     "CorporateAction": {
       "additionalProperties": false,
       "description": "Corporate action.\n\nCDM reference: ``reset`` / ``split`` / ``termsChange``; intent\n``CorporateActionAdjustment``. ``ts_event_ns`` is the announcement;\n``effective_ns`` is when it applies. ``ratio`` is new units per old unit\n(split: 2 for 2-for-1; reverse split: 0.5; stock dividend: additional units\nper unit held).",
@@ -230,6 +318,135 @@
       "title": "CouponPayment",
       "type": "object"
     },
+    "CryptoSpot": {
+      "additionalProperties": false,
+      "description": "Crypto spot pair: price of one ``base_currency`` unit in ``quote_currency``.",
+      "properties": {
+        "base_currency": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "identifiers": {
+          "$ref": "#/$defs/Identifiers"
+        },
+        "knowledge_ns": {
+          "type": "integer"
+        },
+        "multiplier": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "price_increment": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "quantity_increment": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "quote_currency": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "instrument.crypto_spot.v1"
+          ]
+        },
+        "valid_from_ns": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "quote_currency",
+        "price_increment",
+        "quantity_increment",
+        "multiplier",
+        "valid_from_ns",
+        "knowledge_ns",
+        "identifiers",
+        "base_currency"
+      ],
+      "title": "CryptoSpot",
+      "type": "object"
+    },
+    "DayCount": {
+      "description": "Day-count convention names; the arithmetic belongs to BP6.",
+      "enum": [
+        "act_360",
+        "act_365_fixed",
+        "act_act_icma",
+        "act_act_isda",
+        "thirty_360"
+      ],
+      "title": "DayCount"
+    },
+    "Equity": {
+      "additionalProperties": false,
+      "description": "Share or exchange-traded fund (``is_fund``).",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "identifiers": {
+          "$ref": "#/$defs/Identifiers"
+        },
+        "is_fund": {
+          "type": "boolean"
+        },
+        "knowledge_ns": {
+          "type": "integer"
+        },
+        "multiplier": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "price_increment": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "quantity_increment": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "quote_currency": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "instrument.equity.v1"
+          ]
+        },
+        "valid_from_ns": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "quote_currency",
+        "price_increment",
+        "quantity_increment",
+        "multiplier",
+        "valid_from_ns",
+        "knowledge_ns",
+        "identifiers",
+        "is_fund"
+      ],
+      "title": "Equity",
+      "type": "object"
+    },
+    "ExerciseStyle": {
+      "description": "When an option may be exercised.",
+      "enum": [
+        "american",
+        "european"
+      ],
+      "title": "ExerciseStyle"
+    },
     "FundingPayment": {
       "additionalProperties": false,
       "description": "Perpetual-swap funding at ``ts_event_ns`` (CDM: ``transfer``; intent ``CashFlow``).\n\nPositive ``funding_rate``: longs pay shorts.",
@@ -277,6 +494,73 @@
       "title": "FundingPayment",
       "type": "object"
     },
+    "Future": {
+      "additionalProperties": false,
+      "description": "Listed future.",
+      "properties": {
+        "expiry_ns": {
+          "type": "integer"
+        },
+        "id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "identifiers": {
+          "$ref": "#/$defs/Identifiers"
+        },
+        "knowledge_ns": {
+          "type": "integer"
+        },
+        "last_trade_ns": {
+          "type": "integer"
+        },
+        "multiplier": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "price_increment": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "quantity_increment": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "quote_currency": {
+          "type": "string"
+        },
+        "settlement": {
+          "$ref": "#/$defs/Settlement"
+        },
+        "type": {
+          "enum": [
+            "instrument.future.v1"
+          ]
+        },
+        "underlying": {
+          "type": "string"
+        },
+        "valid_from_ns": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "quote_currency",
+        "price_increment",
+        "quantity_increment",
+        "multiplier",
+        "valid_from_ns",
+        "knowledge_ns",
+        "identifiers",
+        "underlying",
+        "expiry_ns",
+        "last_trade_ns",
+        "settlement"
+      ],
+      "title": "Future",
+      "type": "object"
+    },
     "FuturesExpiry": {
       "additionalProperties": false,
       "description": "Final settlement of a future (CDM: ``transfer``, cash or deliverable).",
@@ -321,6 +605,95 @@
         "settlement_price"
       ],
       "title": "FuturesExpiry",
+      "type": "object"
+    },
+    "FxDelivery": {
+      "description": "Spot or forward delivery.",
+      "enum": [
+        "forward",
+        "spot"
+      ],
+      "title": "FxDelivery"
+    },
+    "FxPair": {
+      "additionalProperties": false,
+      "description": "Currency pair: price of one ``base_currency`` unit in ``quote_currency``.\n\nSpot carries ``settlement_lag_days``; a forward carries ``value_date_ns``.",
+      "properties": {
+        "base_currency": {
+          "type": "string"
+        },
+        "delivery": {
+          "$ref": "#/$defs/FxDelivery"
+        },
+        "id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "identifiers": {
+          "$ref": "#/$defs/Identifiers"
+        },
+        "knowledge_ns": {
+          "type": "integer"
+        },
+        "multiplier": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "price_increment": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "quantity_increment": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "quote_currency": {
+          "type": "string"
+        },
+        "settlement_lag_days": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "enum": [
+            "instrument.fx.v1"
+          ]
+        },
+        "valid_from_ns": {
+          "type": "integer"
+        },
+        "value_date_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "quote_currency",
+        "price_increment",
+        "quantity_increment",
+        "multiplier",
+        "valid_from_ns",
+        "knowledge_ns",
+        "identifiers",
+        "base_currency",
+        "delivery"
+      ],
+      "title": "FxPair",
       "type": "object"
     },
     "FxSettlement": {
@@ -374,6 +747,130 @@
       "title": "FxSettlement",
       "type": "object"
     },
+    "Identifiers": {
+      "additionalProperties": false,
+      "description": "Optional external identifiers, each recorded only when a source supplies it.",
+      "properties": {
+        "cfi": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "dti": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "figi": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "isin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [],
+      "title": "Identifiers",
+      "type": "object"
+    },
+    "InstrumentDefined": {
+      "additionalProperties": false,
+      "description": "One version of an instrument specification.\n\n``instrument.valid_from_ns`` is when the version takes effect and\n``instrument.knowledge_ns`` when it became available (historical\navailability, Strategy section 5). A later correction is a new event with a\nlater ``knowledge_ns``; a version is never edited.",
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Equity"
+            },
+            {
+              "$ref": "#/$defs/Future"
+            },
+            {
+              "$ref": "#/$defs/Option"
+            },
+            {
+              "$ref": "#/$defs/FxPair"
+            },
+            {
+              "$ref": "#/$defs/CryptoSpot"
+            },
+            {
+              "$ref": "#/$defs/PerpetualSwap"
+            },
+            {
+              "$ref": "#/$defs/Bond"
+            }
+          ],
+          "discriminator": {
+            "mapping": {
+              "instrument.bond.v1": "#/$defs/Bond",
+              "instrument.crypto_spot.v1": "#/$defs/CryptoSpot",
+              "instrument.equity.v1": "#/$defs/Equity",
+              "instrument.future.v1": "#/$defs/Future",
+              "instrument.fx.v1": "#/$defs/FxPair",
+              "instrument.option.v1": "#/$defs/Option",
+              "instrument.perpetual_swap.v1": "#/$defs/PerpetualSwap"
+            },
+            "propertyName": "type"
+          }
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "reference.instrument.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "instrument"
+      ],
+      "title": "InstrumentDefined",
+      "type": "object"
+    },
     "InstrumentId": {
       "additionalProperties": false,
       "description": "Stable internal instrument identifier: a venue and the venue's symbol.\n\nA symbol change creates a new identifier linked by a lifecycle event; an\nidentifier is never renamed in place.",
@@ -390,6 +887,82 @@
         "symbol"
       ],
       "title": "InstrumentId",
+      "type": "object"
+    },
+    "Option": {
+      "additionalProperties": false,
+      "description": "Listed option.",
+      "properties": {
+        "exercise_style": {
+          "$ref": "#/$defs/ExerciseStyle"
+        },
+        "expiry_ns": {
+          "type": "integer"
+        },
+        "id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "identifiers": {
+          "$ref": "#/$defs/Identifiers"
+        },
+        "knowledge_ns": {
+          "type": "integer"
+        },
+        "multiplier": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "price_increment": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "quantity_increment": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "quote_currency": {
+          "type": "string"
+        },
+        "right": {
+          "$ref": "#/$defs/OptionRight"
+        },
+        "settlement": {
+          "$ref": "#/$defs/Settlement"
+        },
+        "strike": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "instrument.option.v1"
+          ]
+        },
+        "underlying": {
+          "type": "string"
+        },
+        "valid_from_ns": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "quote_currency",
+        "price_increment",
+        "quantity_increment",
+        "multiplier",
+        "valid_from_ns",
+        "knowledge_ns",
+        "identifiers",
+        "underlying",
+        "right",
+        "strike",
+        "expiry_ns",
+        "exercise_style",
+        "settlement"
+      ],
+      "title": "Option",
       "type": "object"
     },
     "OptionAssignment": {
@@ -517,6 +1090,89 @@
       ],
       "title": "OptionExpiry",
       "type": "object"
+    },
+    "OptionRight": {
+      "description": "Call or put.",
+      "enum": [
+        "call",
+        "put"
+      ],
+      "title": "OptionRight"
+    },
+    "PerpetualSwap": {
+      "additionalProperties": false,
+      "description": "Crypto perpetual swap; ``contract_type`` selects linear or inverse arithmetic (BP6).",
+      "properties": {
+        "base_currency": {
+          "type": "string"
+        },
+        "contract_type": {
+          "$ref": "#/$defs/PerpetualType"
+        },
+        "funding_interval_ns": {
+          "type": "integer"
+        },
+        "id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "identifiers": {
+          "$ref": "#/$defs/Identifiers"
+        },
+        "knowledge_ns": {
+          "type": "integer"
+        },
+        "multiplier": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "price_increment": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "quantity_increment": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "quote_currency": {
+          "type": "string"
+        },
+        "settlement_currency": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "instrument.perpetual_swap.v1"
+          ]
+        },
+        "valid_from_ns": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "quote_currency",
+        "price_increment",
+        "quantity_increment",
+        "multiplier",
+        "valid_from_ns",
+        "knowledge_ns",
+        "identifiers",
+        "base_currency",
+        "settlement_currency",
+        "contract_type",
+        "funding_interval_ns"
+      ],
+      "title": "PerpetualSwap",
+      "type": "object"
+    },
+    "PerpetualType": {
+      "description": "Linear (quote-margined) or inverse (coin-margined) perpetual swap.",
+      "enum": [
+        "inverse",
+        "linear"
+      ],
+      "title": "PerpetualType"
     },
     "Quote": {
       "additionalProperties": false,
@@ -673,6 +1329,9 @@
       "$ref": "#/$defs/FxSettlement"
     },
     {
+      "$ref": "#/$defs/InstrumentDefined"
+    },
+    {
       "$ref": "#/$defs/OptionAssignment"
     },
     {
@@ -700,7 +1359,8 @@
       "lifecycle.option_expiry.v1": "#/$defs/OptionExpiry",
       "market.bar.v1": "#/$defs/Bar",
       "market.quote.v1": "#/$defs/Quote",
-      "market.trade.v1": "#/$defs/Trade"
+      "market.trade.v1": "#/$defs/Trade",
+      "reference.instrument.v1": "#/$defs/InstrumentDefined"
     },
     "propertyName": "type"
   }
