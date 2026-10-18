@@ -26,3 +26,6 @@ Format: Michael Nygard (title, status, context, decision, consequences). Numbers
 | [0015](0015-identifiers-and-time-representation.md) | Identifiers and time representation | Accepted |
 | [0016](0016-in-memory-decimal-representation.md) | In-memory decimal representation | Accepted |
 | [0017](0017-instrument-model-and-cdm-alignment.md) | Instrument model and CDM alignment | Accepted |
+| [0018](0018-configuration-loading-and-precedence.md) | Configuration loading and precedence | Accepted |
+| [0019](0019-secrets-and-risk-limits.md) | Secrets and risk limits | Accepted |
+| [0020](0020-configuration-identity-versioning-and-environments.md) | Configuration identity, versioning and environments | Accepted |
