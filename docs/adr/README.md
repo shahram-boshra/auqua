@@ -34,3 +34,6 @@ Format: Michael Nygard (title, status, context, decision, consequences). Numbers
 | [0023](0023-transactional-store-and-point-in-time-reference-data.md) | Transactional store and point-in-time reference data | Accepted |
 | [0024](0024-concluded-licence-for-dependencies-without-a-declared-expression.md) | Concluded licence for dependencies without a declared expression | Accepted |
 | [0025](0025-walking-skeleton.md) | Walking skeleton | Accepted |
+| [0026](0026-ingestion-raw-store-idempotency-and-revisions.md) | Ingestion: raw store, idempotency and revisions | Accepted |
+| [0027](0027-data-source-terms-and-permitted-use.md) | Data-source terms and permitted use | Accepted |
+| [0028](0028-availability-time.md) | Availability time | Accepted |

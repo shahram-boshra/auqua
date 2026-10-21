@@ -258,7 +258,10 @@ def test_migrations() -> None:
 
 def test_future_config_version_refused(roots: Roots) -> None:
     """A configuration newer than the code is refused (Y8)."""
-    _write(roots.config / "paper" / "config.toml", CONFIG.format(env="paper").replace("= 1", "= 3"))
+    future = f"= {CONFIG_MIGRATIONS.current + 1}"
+    _write(
+        roots.config / "paper" / "config.toml", CONFIG.format(env="paper").replace("= 1", future)
+    )
     with pytest.raises(UnsupportedVersionError):
         _load(roots)
 

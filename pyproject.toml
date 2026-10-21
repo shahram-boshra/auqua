@@ -151,6 +151,21 @@ source_modules = ["auqua.config"]
 forbidden_modules = ["auqua.storage"]
 
 [[tool.importlinter.contracts]]
+name = "Ingestion imports no component above it (BP4 section 2)"
+type = "forbidden"
+source_modules = ["auqua.ingestion"]
+forbidden_modules = [
+    "auqua.alpha",
+    "auqua.analytics",
+    "auqua.execution",
+    "auqua.operations",
+    "auqua.portfolio",
+    "auqua.risk",
+    "auqua.telemetry",
+    "auqua.visualization",
+]
+
+[[tool.importlinter.contracts]]
 name = "Pre-trade risk is independent of the components it checks (Strategy Module 7; ADR 0025)"
 type = "forbidden"
 source_modules = ["auqua.risk"]

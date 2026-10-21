@@ -43,7 +43,7 @@ from auqua.contracts.events.trading import (
 from auqua.contracts.identity import InstrumentId, derived_id
 from auqua.contracts.instruments import CryptoSpot, Identifiers
 from auqua.execution.simulated import SimulatedVenue
-from auqua.ingestion.kline_csv import KlineFormatError, TimeUnit, read_klines
+from auqua.ingestion.parsers.binance_vision_klines import KlineFormatError, TimeUnit, read_klines
 from auqua.portfolio.book import Book
 from auqua.risk.gate import MAX_ORDER_NOTIONAL, MAX_POSITION, PreTradeGate, TradingLimits
 from auqua.storage.eventlog import EventLog
@@ -111,7 +111,7 @@ SPEC = BacktestSpec(
     initial_cash=Decimal(100_000),
 )
 CONFIG = """\
-schema_version = 2
+schema_version = 3
 environment = "research"
 
 [paths]

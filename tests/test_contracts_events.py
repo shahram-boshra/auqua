@@ -29,9 +29,19 @@ from auqua.contracts.events import (
     OptionExercise,
     OptionExpiry,
     Quote,
+    ReferenceRate,
     Trade,
 )
 from auqua.contracts.events.base import Event, LogRecord
+from auqua.contracts.events.ingest import (
+    AvailabilityBasis,
+    ChecksumResult,
+    DataGap,
+    GapReason,
+    IngestRun,
+    RunOutcome,
+    UseClass,
+)
 from auqua.contracts.events.lifecycle import CorporateActionKind
 from auqua.contracts.events.market import Aggressor
 from auqua.contracts.events.trading import (
@@ -44,7 +54,7 @@ from auqua.contracts.events.trading import (
     Signal,
     Target,
 )
-from auqua.contracts.identity import InstrumentId, new_id
+from auqua.contracts.identity import InstrumentId, SeriesId, new_id
 from auqua.contracts.instruments import CryptoSpot, Identifiers, Settlement
 
 SNAPSHOT = Path(__file__).parent / "snapshots" / "canonical_events.schema.json"
@@ -175,6 +185,45 @@ def _examples() -> list[Event]:
         ),
         InstrumentDefined(**_common(new_id()), instrument=_crypto_spot(knowledge_ns=T0)),
         *_trading_examples(),
+        *_ingestion_examples(),
+    ]
+
+
+def _ingestion_examples() -> list[Event]:
+    """One instance of each BP4 event type."""
+    digest = "0" * 64
+    return [
+        ReferenceRate(
+            **_common(new_id()),
+            series_id=SeriesId("FRB", "H10/RXI$US_N.B.EU"),
+            value=Decimal("1.1211"),
+            unit="USD per EUR",
+            ts_published_ns=T0 + HOUR_NS,
+        ),
+        IngestRun(
+            **_common(new_id()),
+            profile="frb/h10/daily",
+            terms="public-domain",
+            use_class=UseClass.UNRESTRICTED,
+            raw_sha256=digest,
+            raw_size=10,
+            retrieval="https://www.federalreserve.gov/datadownload/",
+            checksum=ChecksumResult.NOT_PUBLISHED,
+            parser="frb-h10-ddp-csv",
+            parser_version="1",
+            parser_id=digest,
+            outcome=RunOutcome.COMPLETED,
+            availability=AvailabilityBasis.PUBLISHED_SCHEDULE,
+            appended=1,
+        ),
+        DataGap(
+            **{**_common(new_id()), "ts_event_ns": T0},
+            key=str(BTC),
+            start_ns=T0,
+            end_ns=T0 + HOUR_NS,
+            reason=GapReason.NO_DATA_PUBLISHED,
+            interval_ns=HOUR_NS,
+        ),
     ]
 
 

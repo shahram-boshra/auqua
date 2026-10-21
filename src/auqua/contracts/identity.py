@@ -91,3 +91,37 @@ class InstrumentId(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
         if not separator:
             raise InvalidFieldError(f"instrument id {text!r} has no {_SEPARATOR!r}")
         return cls(venue, symbol)
+
+
+class SeriesId(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Identifier of a published reference series (BP4 section 4): a publisher and its code.
+
+    Reference rates (central-bank exchange rates, par yields) are observations
+    of a series, not tradable instruments. Publisher codes follow
+    :data:`VENUE_PATTERN` and series codes :data:`SYMBOL_PATTERN`, e.g.
+    ``FRB:H10/RXI$US_N.B.EU``.
+    """
+
+    publisher: str
+    code: str
+
+    def __post_init__(self) -> None:
+        """Validate the publisher and series codes."""
+        require_match(self.publisher, VENUE_PATTERN, "publisher")
+        require_match(self.code, SYMBOL_PATTERN, "code")
+
+    def __str__(self) -> str:
+        """Canonical text form ``PUBLISHER:CODE``."""
+        return f"{self.publisher}{_SEPARATOR}{self.code}"
+
+    @classmethod
+    def parse(cls, text: str) -> SeriesId:
+        """Parse the canonical text form ``PUBLISHER:CODE``.
+
+        Raises:
+            InvalidFieldError: ``text`` is not in canonical form.
+        """
+        publisher, separator, code = text.partition(_SEPARATOR)
+        if not separator:
+            raise InvalidFieldError(f"series id {text!r} has no {_SEPARATOR!r}")
+        return cls(publisher, code)
