@@ -111,7 +111,7 @@ SPEC = BacktestSpec(
     initial_cash=Decimal(100_000),
 )
 CONFIG = """\
-schema_version = 3
+schema_version = 4
 environment = "research"
 
 [paths]

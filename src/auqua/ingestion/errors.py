@@ -15,6 +15,10 @@ class TermsNotAcknowledgedError(IngestionError):
     """The source is not enabled, or its terms version is not the acknowledged one."""
 
 
+class NotEligibleError(IngestionError):
+    """The source is not cleared for the operator's jurisdiction (ADR 0029)."""
+
+
 class PermitError(IngestionError):
     """The source's permitted-use profile excludes the requested use."""
 

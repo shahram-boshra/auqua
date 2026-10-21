@@ -20,7 +20,7 @@ from auqua.config.storage import StorageConfig
 EnvironmentField = Annotated[Environment, Field(strict=False)]
 OverridablePath = Annotated[Path, Overridable(), Field(strict=False)]
 
-CONFIG_MIGRATIONS = Migrations("config", current=3)
+CONFIG_MIGRATIONS = Migrations("config", current=4)
 RISK_LIMITS_MIGRATIONS = Migrations("risk_limits", current=1)
 
 
@@ -34,8 +34,14 @@ def _config_v2_to_v3(document: Document) -> Document:
     return {**document, "schema_version": 3}
 
 
+def _config_v3_to_v4(document: Document) -> Document:
+    """Version 4 adds ``ingestion.jurisdiction`` (ADR 0029); a version-3 file has none set."""
+    return {**document, "schema_version": 4}
+
+
 CONFIG_MIGRATIONS.register(1, _config_v1_to_v2)
 CONFIG_MIGRATIONS.register(2, _config_v2_to_v3)
+CONFIG_MIGRATIONS.register(3, _config_v3_to_v4)
 
 
 class PathsConfig(ConfigModel):
@@ -55,7 +61,7 @@ class PathsConfig(ConfigModel):
 class AuquaConfig(ConfigModel):
     """Root configuration of one environment (``config.toml``)."""
 
-    schema_version: Literal[3]
+    schema_version: Literal[4]
     environment: EnvironmentField
     paths: PathsConfig
     storage: StorageConfig = StorageConfig()
