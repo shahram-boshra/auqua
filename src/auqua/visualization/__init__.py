@@ -4,6 +4,6 @@
 
 Read-only reports, including the static backtest and Research Integrity reports.
 
-Owned by BP12, Visualization & Reporting. Modules are added by that Blueprint's
-implementation slice.
+Owned by BP12, Visualization & Reporting. Walking-skeleton (thin) module: ``report``
+(ADR 0025); further modules are added by that Blueprint's implementation slice.
 """

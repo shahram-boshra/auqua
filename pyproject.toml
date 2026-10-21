@@ -149,3 +149,35 @@ name = "Configuration does not import storage (BP3 section 4)"
 type = "forbidden"
 source_modules = ["auqua.config"]
 forbidden_modules = ["auqua.storage"]
+
+[[tool.importlinter.contracts]]
+name = "Pre-trade risk is independent of the components it checks (Strategy Module 7; ADR 0025)"
+type = "forbidden"
+source_modules = ["auqua.risk"]
+forbidden_modules = [
+    "auqua.alpha",
+    "auqua.analytics",
+    "auqua.execution",
+    "auqua.ingestion",
+    "auqua.portfolio",
+    "auqua.visualization",
+]
+
+[[tool.importlinter.contracts]]
+name = "Signals do not reach orders, risk or the venue directly (ADR 0025)"
+type = "forbidden"
+source_modules = ["auqua.alpha"]
+forbidden_modules = ["auqua.execution", "auqua.portfolio", "auqua.risk", "auqua.analytics"]
+
+[[tool.importlinter.contracts]]
+name = "Components do not import the backtest runner (ADR 0025)"
+type = "forbidden"
+source_modules = [
+    "auqua.alpha",
+    "auqua.execution",
+    "auqua.ingestion",
+    "auqua.portfolio",
+    "auqua.risk",
+    "auqua.visualization",
+]
+forbidden_modules = ["auqua.analytics"]

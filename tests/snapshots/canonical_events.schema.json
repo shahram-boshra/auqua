@@ -447,6 +447,71 @@
       ],
       "title": "ExerciseStyle"
     },
+    "Fill": {
+      "additionalProperties": false,
+      "description": "Execution of an order (``causation_id`` is the order id).",
+      "properties": {
+        "causation_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "fee": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "fee_currency": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "price": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "quantity": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "side": {
+          "$ref": "#/$defs/Side"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "execution.fill.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "causation_id",
+        "instrument_id",
+        "side",
+        "price",
+        "quantity",
+        "fee",
+        "fee_currency"
+      ],
+      "title": "Fill",
+      "type": "object"
+    },
     "FundingPayment": {
       "additionalProperties": false,
       "description": "Perpetual-swap funding at ``ts_event_ns`` (CDM: ``transfer``; intent ``CashFlow``).\n\nPositive ``funding_rate``: longs pay shorts.",
@@ -1099,6 +1164,68 @@
       ],
       "title": "OptionRight"
     },
+    "OrderSubmitted": {
+      "additionalProperties": false,
+      "description": "An order sent towards the venue; the event id is the order id.",
+      "properties": {
+        "causation_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "order_type": {
+          "$ref": "#/$defs/OrderType"
+        },
+        "quantity": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "side": {
+          "$ref": "#/$defs/Side"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "order.submitted.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "causation_id",
+        "instrument_id",
+        "side",
+        "quantity",
+        "order_type"
+      ],
+      "title": "OrderSubmitted",
+      "type": "object"
+    },
+    "OrderType": {
+      "description": "Order types of the skeleton (market only).",
+      "enum": [
+        "market"
+      ],
+      "title": "OrderType"
+    },
     "PerpetualSwap": {
       "additionalProperties": false,
       "description": "Crypto perpetual swap; ``contract_type`` selects linear or inverse arithmetic (BP6).",
@@ -1231,6 +1358,149 @@
       "title": "Quote",
       "type": "object"
     },
+    "RiskDecision": {
+      "additionalProperties": false,
+      "description": "Pre-trade risk outcome for one order (``causation_id`` is the order id).",
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "causation_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "format": "decimal",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rule": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "risk.decision.v1"
+          ]
+        },
+        "value": {
+          "anyOf": [
+            {
+              "format": "decimal",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "causation_id",
+        "instrument_id",
+        "accepted",
+        "rule"
+      ],
+      "title": "RiskDecision",
+      "type": "object"
+    },
+    "RunStarted": {
+      "additionalProperties": false,
+      "description": "Identity of one run: what it read, how it was configured, which code ran.\n\nThe event ``id`` is the run id. Hashes are lower-case hex SHA-256;\n``instrument_sha256`` hashes the JSON encoding of the instrument version\nthe run traded.",
+      "properties": {
+        "code_id": {
+          "type": "string"
+        },
+        "code_version": {
+          "type": "string"
+        },
+        "config_id": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "input_head_hash": {
+          "type": "string"
+        },
+        "input_next_sequence": {
+          "type": "integer"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "instrument_sha256": {
+          "type": "string"
+        },
+        "risk_limits_sha256": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "spec_id": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "research.run.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "input_head_hash",
+        "input_next_sequence",
+        "instrument_id",
+        "instrument_sha256",
+        "config_id",
+        "spec_id",
+        "risk_limits_sha256",
+        "code_id",
+        "code_version"
+      ],
+      "title": "RunStarted",
+      "type": "object"
+    },
     "Settlement": {
       "description": "Settlement of a derivative at expiry or exercise.",
       "enum": [
@@ -1238,6 +1508,115 @@
         "physical"
       ],
       "title": "Settlement"
+    },
+    "Side": {
+      "description": "Order or fill side.",
+      "enum": [
+        "buy",
+        "sell"
+      ],
+      "title": "Side"
+    },
+    "Signal": {
+      "additionalProperties": false,
+      "description": "Direction proposed by a signal provider for one instrument (-1, 0 or +1).",
+      "properties": {
+        "causation_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "direction": {
+          "type": "integer"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "provider_version": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "alpha.signal.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "causation_id",
+        "instrument_id",
+        "direction",
+        "provider",
+        "provider_version"
+      ],
+      "title": "Signal",
+      "type": "object"
+    },
+    "Target": {
+      "additionalProperties": false,
+      "description": "Target position (signed quantity) for one instrument.",
+      "properties": {
+        "causation_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "quantity": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "portfolio.target.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "causation_id",
+        "instrument_id",
+        "quantity"
+      ],
+      "title": "Target",
+      "type": "object"
     },
     "Trade": {
       "additionalProperties": false,
@@ -1320,6 +1699,9 @@
       "$ref": "#/$defs/CouponPayment"
     },
     {
+      "$ref": "#/$defs/Fill"
+    },
+    {
       "$ref": "#/$defs/FundingPayment"
     },
     {
@@ -1341,7 +1723,22 @@
       "$ref": "#/$defs/OptionExpiry"
     },
     {
+      "$ref": "#/$defs/OrderSubmitted"
+    },
+    {
       "$ref": "#/$defs/Quote"
+    },
+    {
+      "$ref": "#/$defs/RiskDecision"
+    },
+    {
+      "$ref": "#/$defs/RunStarted"
+    },
+    {
+      "$ref": "#/$defs/Signal"
+    },
+    {
+      "$ref": "#/$defs/Target"
     },
     {
       "$ref": "#/$defs/Trade"
@@ -1349,6 +1746,8 @@
   ],
   "discriminator": {
     "mapping": {
+      "alpha.signal.v1": "#/$defs/Signal",
+      "execution.fill.v1": "#/$defs/Fill",
       "lifecycle.corporate_action.v1": "#/$defs/CorporateAction",
       "lifecycle.coupon_payment.v1": "#/$defs/CouponPayment",
       "lifecycle.funding_payment.v1": "#/$defs/FundingPayment",
@@ -1360,7 +1759,11 @@
       "market.bar.v1": "#/$defs/Bar",
       "market.quote.v1": "#/$defs/Quote",
       "market.trade.v1": "#/$defs/Trade",
-      "reference.instrument.v1": "#/$defs/InstrumentDefined"
+      "order.submitted.v1": "#/$defs/OrderSubmitted",
+      "portfolio.target.v1": "#/$defs/Target",
+      "reference.instrument.v1": "#/$defs/InstrumentDefined",
+      "research.run.v1": "#/$defs/RunStarted",
+      "risk.decision.v1": "#/$defs/RiskDecision"
     },
     "propertyName": "type"
   }
