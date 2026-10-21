@@ -48,3 +48,9 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   SCANOSS matching, because the OSSKB rate-limits GitHub-hosted runners.
 - The provenance gate scans file contents from Git objects (index or commit),
   not the working tree, and SCANOSS ignores settings files.
+
+### Security
+
+- `certifi` 2026.7.22 → 2026.10.19 in the development and scanner lock files
+  (GHSA-6q48-6c7w-9gw2, critical: bundled emSign root CAs with compromised
+  intermediate keys). `certifi` is not a runtime dependency.
