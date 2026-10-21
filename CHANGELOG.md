@@ -49,9 +49,23 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
 - The runtime licence gate accepts a dependency without a declared licence
   expression only through a recorded concluded licence bound to its version and
   licence-file hashes (ADR 0024).
+- Ingestion (BP4): an immutable raw store addressed by SHA-256; HTTPS
+  retrieval with rate limits, jittered backoff and `Retry-After`; source
+  profiles of the data providers' terms with operator acknowledgement and
+  permitted-use checks; exact parsers for Coinbase Exchange candles and
+  products, Binance Vision klines, Federal Reserve H.10 rates and US Treasury
+  par yields; gap events; idempotent runs with revisions and a lineage record;
+  publication-time availability and a point-in-time market view; the
+  `python -m auqua.ingestion` command line (ADRs 0026-0028). Event types
+  `market.reference_rate.v1`, `ingest.run.v1` and `data.gap.v1`; configuration
+  schema version 3 adds the `ingestion` section. No third-party data is
+  included; tests use synthetic files in the providers' layouts.
 
 ### Changed
 
+- Bars carry an optional `revision` and publication time, and their ids now
+  include the interval, so bars of different intervals never collide (BP4).
+  The skeleton's kline reader moved to `auqua.ingestion.parsers`.
 - The CI provenance check runs ScanCode and the SCANOSS settings check without
   SCANOSS matching, because the OSSKB rate-limits GitHub-hosted runners.
 - The provenance gate scans file contents from Git objects (index or commit),

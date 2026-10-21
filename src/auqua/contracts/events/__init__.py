@@ -7,6 +7,7 @@ that adds event types places them in ``auqua.contracts.events.<domain>`` and
 adds them to this union.
 """
 
+from auqua.contracts.events.ingest import DataGap, IngestRun
 from auqua.contracts.events.lifecycle import (
     CorporateAction,
     CouponPayment,
@@ -17,7 +18,7 @@ from auqua.contracts.events.lifecycle import (
     OptionExercise,
     OptionExpiry,
 )
-from auqua.contracts.events.market import Bar, Quote, Trade
+from auqua.contracts.events.market import Bar, Quote, ReferenceRate, Trade
 from auqua.contracts.events.reference import InstrumentDefined
 from auqua.contracts.events.trading import (
     Fill,
@@ -32,6 +33,7 @@ CanonicalEvent = (
     Trade
     | Quote
     | Bar
+    | ReferenceRate
     | CorporateAction
     | FuturesExpiry
     | OptionExercise
@@ -47,6 +49,8 @@ CanonicalEvent = (
     | OrderSubmitted
     | RiskDecision
     | Fill
+    | IngestRun
+    | DataGap
 )
 
 __all__ = [
@@ -54,16 +58,19 @@ __all__ = [
     "CanonicalEvent",
     "CorporateAction",
     "CouponPayment",
+    "DataGap",
     "Fill",
     "FundingPayment",
     "FuturesExpiry",
     "FxSettlement",
+    "IngestRun",
     "InstrumentDefined",
     "OptionAssignment",
     "OptionExercise",
     "OptionExpiry",
     "OrderSubmitted",
     "Quote",
+    "ReferenceRate",
     "RiskDecision",
     "RunStarted",
     "Signal",

@@ -4,7 +4,9 @@
 
 One dataset per event type and version, under ``<root>/<tag>/``, Hive
 partitions ``venue=…/symbol=…/year=…`` (UTC year of ``ts_event_ns``;
-partition values percent-encoded, which DuckDB decodes). Column types are
+partition values percent-encoded, which DuckDB decodes). The partition key is
+the event's ``instrument_id`` (venue, symbol) or, for reference series, its
+``series_id`` (publisher as ``venue``, code as ``symbol``; BP4 section 4). Column types are
 fixed per dataset: every decimal is ``decimal128(38, 18)``, because DuckDB
 silently truncates when files of one dataset differ in decimal scale.
 
@@ -16,6 +18,7 @@ is full, it is flushed before more rows are accepted, so nothing is dropped.
 """
 
 import datetime
+import functools
 import hashlib
 import uuid
 from collections.abc import Iterable
@@ -31,7 +34,7 @@ import pyarrow.parquet as pq
 
 from auqua.config.storage import StorageConfig
 from auqua.contracts.events.base import Event, LogRecord
-from auqua.contracts.identity import InstrumentId
+from auqua.contracts.identity import InstrumentId, SeriesId
 from auqua.storage.chain import GENESIS
 from auqua.storage.errors import (
     EncodingError,
@@ -45,7 +48,8 @@ DECIMAL_TYPE = pa.decimal128(38, 18)
 MANIFEST = "manifest.json"
 MANIFEST_FORMAT = 1
 PARTITION_KEYS = ("venue", "symbol", "year")
-_INSTRUMENT_FIELD = "instrument_id"
+#: Partition-key fields and their identifier types, in order of precedence.
+_KEY_FIELDS: dict[str, type] = {"instrument_id": InstrumentId, "series_id": SeriesId}
 _NS_PER_SECOND = 1_000_000_000
 
 
@@ -112,13 +116,30 @@ def _fields(event_type: type[Event]) -> tuple[msgspec.inspect.Field, ...]:
     if not isinstance(info, msgspec.inspect.StructType):  # pragma: no cover - events are structs
         raise SchemaMismatchError(f"{event_type.__name__} is not a struct")
     fields = info.fields
-    instrument = [f for f in fields if f.name == _INSTRUMENT_FIELD]
-    if not instrument or not (
-        isinstance(instrument[0].type, msgspec.inspect.StructType)
-        and instrument[0].type.cls is InstrumentId
-    ):
-        raise SchemaMismatchError(f"{event_type.__name__} has no instrument_id to partition by")
-    return tuple(f for f in fields if f.name != _INSTRUMENT_FIELD)
+    name = _key_field(event_type)
+    return tuple(f for f in fields if f.name != name)
+
+
+@functools.cache
+def _key_field(event_type: type[Event]) -> str:
+    """Name of the partition-key field of ``event_type``.
+
+    Raises:
+        SchemaMismatchError: no ``instrument_id`` or ``series_id`` of the expected type.
+    """
+    info = msgspec.inspect.type_info(event_type)
+    if isinstance(info, msgspec.inspect.StructType):
+        for field in info.fields:
+            expected = _KEY_FIELDS.get(field.name)
+            if (
+                expected is not None
+                and isinstance(field.type, msgspec.inspect.StructType)
+                and field.type.cls is expected
+            ):
+                return field.name
+    raise SchemaMismatchError(
+        f"{event_type.__name__} has no instrument_id or series_id to partition by"
+    )
 
 
 def dataset_schema(event_type: type[Event]) -> pa.Schema:
@@ -126,7 +147,7 @@ def dataset_schema(event_type: type[Event]) -> pa.Schema:
 
     Raises:
         SchemaMismatchError: a field has no column rule, or the type has no
-            ``instrument_id``.
+            ``instrument_id`` or ``series_id``.
     """
     columns = [pa.field("sequence", pa.int64(), nullable=False)]
     for field in _fields(event_type):
@@ -158,10 +179,12 @@ def _column_value(value: object) -> object:
 
 
 def _partition(event: Event) -> tuple[str, str, int]:
-    instrument = cast("InstrumentId", getattr(event, _INSTRUMENT_FIELD))
+    key = cast("InstrumentId | SeriesId", getattr(event, _key_field(type(event))))
     seconds = event.ts_event_ns // _NS_PER_SECOND
     year = datetime.datetime.fromtimestamp(seconds, tz=datetime.UTC).year
-    return instrument.venue, instrument.symbol, year
+    if isinstance(key, SeriesId):
+        return key.publisher, key.code, year
+    return key.venue, key.symbol, year
 
 
 def partition_path(venue: str, symbol: str, year: int) -> str:

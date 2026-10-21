@@ -10,6 +10,7 @@ columns agree with the decoded event. Any mismatch raises
 in live operation and in replay alike, and never writes to the log.
 """
 
+import uuid
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import TracebackType
@@ -78,6 +79,39 @@ class EventLogReader:
         if row is None:
             raise LogCorruptionError(f"{self._path}: no record {sequence}")
         return bytes(row[0])
+
+    def find(self, source: str, event_id: uuid.UUID) -> LogRecord[Event] | None:
+        """The stored record with (``source``, ``event_id``), or ``None`` (BP4 section 4.3).
+
+        The payload is decoded and its indexed columns checked; the chain is
+        checked by :meth:`records` and :meth:`verify`, not by a point lookup.
+
+        Raises:
+            LogCorruptionError: the payload does not decode or disagrees with its columns.
+        """
+        row = self._connection.execute(
+            "SELECT sequence, type, ts_event_ns, ts_ingest_ns, payload FROM log "
+            "WHERE source = ? AND id = ?",
+            (source, event_id.bytes),
+        ).fetchone()
+        if row is None:
+            return None
+        sequence, tag, ts_event, ts_ingest, payload = row
+        where = f"{self._path}: sequence {sequence}"
+        try:
+            event = self._codec.decode(payload)
+            stored_tag = _TAG_DECODER.decode(payload).type
+        except (EventDecodeError, msgspec.ValidationError) as error:
+            raise LogCorruptionError(f"{where}: payload does not decode") from error
+        if (stored_tag, event.source, event.id, event.ts_event_ns, event.ts_ingest_ns) != (
+            tag,
+            source,
+            event_id,
+            ts_event,
+            ts_ingest,
+        ):
+            raise LogCorruptionError(f"{where}: columns disagree with the payload")
+        return LogRecord(sequence, event)
 
     def _previous_hash(self, from_sequence: int) -> bytes:
         return GENESIS if from_sequence == 0 else self.hash_at(from_sequence - 1)

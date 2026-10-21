@@ -8,9 +8,19 @@
       ],
       "title": "Aggressor"
     },
+    "AvailabilityBasis": {
+      "description": "How the availability time of the run's records was established (BP4 section 4.6).",
+      "enum": [
+        "declared",
+        "event_end",
+        "published_schedule",
+        "unknown"
+      ],
+      "title": "AvailabilityBasis"
+    },
     "Bar": {
       "additionalProperties": false,
-      "description": "Aggregated bar over ``[start_ns, start_ns + interval_ns)``.\n\n``ts_event_ns`` is the end of the interval, when the bar became complete.",
+      "description": "Aggregated bar over ``[start_ns, start_ns + interval_ns)``.\n\n``ts_event_ns`` is the end of the interval, when the bar became complete.\n``revision`` and ``ts_published_ns`` follow the module rules.",
       "properties": {
         "close": {
           "format": "decimal",
@@ -38,6 +48,10 @@
           "format": "decimal",
           "type": "string"
         },
+        "revision": {
+          "default": 0,
+          "type": "integer"
+        },
         "source": {
           "type": "string"
         },
@@ -49,6 +63,17 @@
         },
         "ts_ingest_ns": {
           "type": "integer"
+        },
+        "ts_published_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "type": {
           "enum": [
@@ -165,6 +190,15 @@
       ],
       "title": "Bond",
       "type": "object"
+    },
+    "ChecksumResult": {
+      "description": "Outcome of the provider checksum check.",
+      "enum": [
+        "mismatch",
+        "not_published",
+        "verified"
+      ],
+      "title": "ChecksumResult"
     },
     "CorporateAction": {
       "additionalProperties": false,
@@ -371,6 +405,66 @@
         "base_currency"
       ],
       "title": "CryptoSpot",
+      "type": "object"
+    },
+    "DataGap": {
+      "additionalProperties": false,
+      "description": "An expected interval ``[start_ns, end_ns)`` of ``key`` without a record.\n\n``key`` is the canonical text of the instrument or series id;\n``interval_ns`` is the bar interval, or ``None`` for business-day series.\n``ts_event_ns`` equals ``start_ns``.",
+      "properties": {
+        "end_ns": {
+          "type": "integer"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "interval_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "key": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/GapReason"
+        },
+        "source": {
+          "type": "string"
+        },
+        "start_ns": {
+          "type": "integer"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "data.gap.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "key",
+        "start_ns",
+        "end_ns",
+        "reason"
+      ],
+      "title": "DataGap",
       "type": "object"
     },
     "DayCount": {
@@ -812,6 +906,14 @@
       "title": "FxSettlement",
       "type": "object"
     },
+    "GapReason": {
+      "description": "Why an expected interval has no record.",
+      "enum": [
+        "missing",
+        "no_data_published"
+      ],
+      "title": "GapReason"
+    },
     "Identifiers": {
       "additionalProperties": false,
       "description": "Optional external identifiers, each recorded only when a source supplies it.",
@@ -863,6 +965,118 @@
       },
       "required": [],
       "title": "Identifiers",
+      "type": "object"
+    },
+    "IngestRun": {
+      "additionalProperties": false,
+      "description": "Lineage record of one ingestion run, appended after the run's records.\n\nThe run key is (``profile``, ``raw_sha256``, ``parser_id``). Counts:\n``appended`` new records, ``duplicates`` records already stored with the\nsame content, ``revisions`` records stored as a new revision, ``gaps``\n:class:`DataGap` events, ``unavailable`` records without a known\navailability time.",
+      "properties": {
+        "appended": {
+          "default": 0,
+          "type": "integer"
+        },
+        "availability": {
+          "$ref": "#/$defs/AvailabilityBasis"
+        },
+        "checksum": {
+          "$ref": "#/$defs/ChecksumResult"
+        },
+        "duplicates": {
+          "default": 0,
+          "type": "integer"
+        },
+        "gaps": {
+          "default": 0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "outcome": {
+          "$ref": "#/$defs/RunOutcome"
+        },
+        "parser": {
+          "type": "string"
+        },
+        "parser_id": {
+          "type": "string"
+        },
+        "parser_version": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "raw_sha256": {
+          "type": "string"
+        },
+        "raw_size": {
+          "type": "integer"
+        },
+        "retrieval": {
+          "type": "string"
+        },
+        "revisions": {
+          "default": 0,
+          "type": "integer"
+        },
+        "source": {
+          "type": "string"
+        },
+        "terms": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "ingest.run.v1"
+          ]
+        },
+        "unavailable": {
+          "default": 0,
+          "type": "integer"
+        },
+        "use_class": {
+          "$ref": "#/$defs/UseClass"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "profile",
+        "terms",
+        "use_class",
+        "raw_sha256",
+        "raw_size",
+        "retrieval",
+        "checksum",
+        "parser",
+        "parser_version",
+        "parser_id",
+        "outcome",
+        "availability"
+      ],
+      "title": "IngestRun",
       "type": "object"
     },
     "InstrumentDefined": {
@@ -1358,6 +1572,60 @@
       "title": "Quote",
       "type": "object"
     },
+    "ReferenceRate": {
+      "additionalProperties": false,
+      "description": "One published observation of a reference series (BP4 section 4.4).\n\n``ts_event_ns`` is the observation time stated by the publisher (e.g. noon\nin New York for the H.10 rates); ``ts_published_ns`` is when the value\nbecame available (required: every reference source states or implies a\npublication time). ``unit`` states the quote convention as published, e.g.\n``USD per EUR`` or ``percent``; the value keeps the published digits.",
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "revision": {
+          "default": 0,
+          "type": "integer"
+        },
+        "series_id": {
+          "$ref": "#/$defs/SeriesId"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "ts_published_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "market.reference_rate.v1"
+          ]
+        },
+        "unit": {
+          "type": "string"
+        },
+        "value": {
+          "format": "decimal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "series_id",
+        "value",
+        "unit",
+        "ts_published_ns"
+      ],
+      "title": "ReferenceRate",
+      "type": "object"
+    },
     "RiskDecision": {
       "additionalProperties": false,
       "description": "Pre-trade risk outcome for one order (``causation_id`` is the order id).",
@@ -1432,6 +1700,15 @@
       "title": "RiskDecision",
       "type": "object"
     },
+    "RunOutcome": {
+      "description": "How an ingestion run ended.",
+      "enum": [
+        "already_ingested",
+        "completed",
+        "rejected"
+      ],
+      "title": "RunOutcome"
+    },
     "RunStarted": {
       "additionalProperties": false,
       "description": "Identity of one run: what it read, how it was configured, which code ran.\n\nThe event ``id`` is the run id. Hashes are lower-case hex SHA-256;\n``instrument_sha256`` hashes the JSON encoding of the instrument version\nthe run traded.",
@@ -1499,6 +1776,24 @@
         "code_version"
       ],
       "title": "RunStarted",
+      "type": "object"
+    },
+    "SeriesId": {
+      "additionalProperties": false,
+      "description": "Identifier of a published reference series (BP4 section 4): a publisher and its code.\n\nReference rates (central-bank exchange rates, par yields) are observations\nof a series, not tradable instruments. Publisher codes follow\n:data:`VENUE_PATTERN` and series codes :data:`SYMBOL_PATTERN`, e.g.\n``FRB:H10/RXI$US_N.B.EU``.",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "publisher": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "publisher",
+        "code"
+      ],
+      "title": "SeriesId",
       "type": "object"
     },
     "Settlement": {
@@ -1686,6 +1981,16 @@
       ],
       "title": "Trade",
       "type": "object"
+    },
+    "UseClass": {
+      "description": "Use the operator declares for data from a source (decision log a25, a28).\n\n``unrestricted`` is for data whose terms impose no use restriction (for\nexample works of the US Government, 17 U.S.C. 105).",
+      "enum": [
+        "internal_commercial",
+        "licensed",
+        "personal_research",
+        "unrestricted"
+      ],
+      "title": "UseClass"
     }
   },
   "anyOf": [
@@ -1699,6 +2004,9 @@
       "$ref": "#/$defs/CouponPayment"
     },
     {
+      "$ref": "#/$defs/DataGap"
+    },
+    {
       "$ref": "#/$defs/Fill"
     },
     {
@@ -1709,6 +2017,9 @@
     },
     {
       "$ref": "#/$defs/FxSettlement"
+    },
+    {
+      "$ref": "#/$defs/IngestRun"
     },
     {
       "$ref": "#/$defs/InstrumentDefined"
@@ -1729,6 +2040,9 @@
       "$ref": "#/$defs/Quote"
     },
     {
+      "$ref": "#/$defs/ReferenceRate"
+    },
+    {
       "$ref": "#/$defs/RiskDecision"
     },
     {
@@ -1747,7 +2061,9 @@
   "discriminator": {
     "mapping": {
       "alpha.signal.v1": "#/$defs/Signal",
+      "data.gap.v1": "#/$defs/DataGap",
       "execution.fill.v1": "#/$defs/Fill",
+      "ingest.run.v1": "#/$defs/IngestRun",
       "lifecycle.corporate_action.v1": "#/$defs/CorporateAction",
       "lifecycle.coupon_payment.v1": "#/$defs/CouponPayment",
       "lifecycle.funding_payment.v1": "#/$defs/FundingPayment",
@@ -1758,6 +2074,7 @@
       "lifecycle.option_expiry.v1": "#/$defs/OptionExpiry",
       "market.bar.v1": "#/$defs/Bar",
       "market.quote.v1": "#/$defs/Quote",
+      "market.reference_rate.v1": "#/$defs/ReferenceRate",
       "market.trade.v1": "#/$defs/Trade",
       "order.submitted.v1": "#/$defs/OrderSubmitted",
       "portfolio.target.v1": "#/$defs/Target",

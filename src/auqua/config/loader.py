@@ -71,6 +71,23 @@ def _read[M: BaseModel](
     return _validate(model, document, path), data
 
 
+def load_root(
+    environment: Environment, config_root: Path, *, environ: Mapping[str, str]
+) -> AuquaConfig:
+    """Load only the root configuration of ``environment`` (tools that need no risk limits).
+
+    Raises:
+        ConfigError: missing, invalid or of another environment.
+    """
+    path = config_root / environment.value / CONFIG_FILE
+    config, _ = _read(path, AuquaConfig, CONFIG_MIGRATIONS, environ)
+    if config.environment is not environment:
+        raise EnvironmentMismatchError(
+            f"{path}: environment {config.environment.value!r}, requested {environment.value!r}"
+        )
+    return config
+
+
 def load[L: ConfigModel](  # noqa: PLR0913
     environment: Environment,
     config_root: Path,

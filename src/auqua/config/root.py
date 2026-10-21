@@ -12,6 +12,7 @@ from typing import Annotated, Literal
 from pydantic import Field, field_validator
 
 from auqua.config.base import ConfigModel, Environment, Overridable
+from auqua.config.ingestion import IngestionConfig
 from auqua.config.migrate import Document, Migrations
 from auqua.config.storage import StorageConfig
 
@@ -19,7 +20,7 @@ from auqua.config.storage import StorageConfig
 EnvironmentField = Annotated[Environment, Field(strict=False)]
 OverridablePath = Annotated[Path, Overridable(), Field(strict=False)]
 
-CONFIG_MIGRATIONS = Migrations("config", current=2)
+CONFIG_MIGRATIONS = Migrations("config", current=3)
 RISK_LIMITS_MIGRATIONS = Migrations("risk_limits", current=1)
 
 
@@ -28,7 +29,13 @@ def _config_v1_to_v2(document: Document) -> Document:
     return {**document, "schema_version": 2}
 
 
+def _config_v2_to_v3(document: Document) -> Document:
+    """Version 3 adds the ``ingestion`` section (BP4); a version-2 file takes its defaults."""
+    return {**document, "schema_version": 3}
+
+
 CONFIG_MIGRATIONS.register(1, _config_v1_to_v2)
+CONFIG_MIGRATIONS.register(2, _config_v2_to_v3)
 
 
 class PathsConfig(ConfigModel):
@@ -48,10 +55,11 @@ class PathsConfig(ConfigModel):
 class AuquaConfig(ConfigModel):
     """Root configuration of one environment (``config.toml``)."""
 
-    schema_version: Literal[2]
+    schema_version: Literal[3]
     environment: EnvironmentField
     paths: PathsConfig
     storage: StorageConfig = StorageConfig()
+    ingestion: IngestionConfig = IngestionConfig()
 
 
 class RiskLimitsFile[L: ConfigModel](ConfigModel):

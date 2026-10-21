@@ -4,6 +4,12 @@
 
 Prices may be negative (some futures and spreads trade below zero); sizes and
 volumes may not. Values are quantized to the instrument grid at ingestion (BP4).
+
+Ingested records carry a ``revision`` (BP4 section 4.3): a provider's later
+correction of a record is stored as the next revision under a new id, never as
+an edit, and readers choose the revision by knowledge time. A record is
+available for point-in-time use at ``ts_published_ns`` when the source states
+a publication time, otherwise at ``ts_event_ns`` (BP4 section 4.6).
 """
 
 from decimal import Decimal
@@ -11,13 +17,24 @@ from enum import StrEnum
 
 from auqua.contracts.errors import InvalidFieldError
 from auqua.contracts.events.base import Event, require_decimals
-from auqua.contracts.identity import InstrumentId
+from auqua.contracts.identity import InstrumentId, SeriesId
 from auqua.contracts.validation import (
     require_non_negative,
     require_positive,
     require_positive_int,
     require_time_ns,
 )
+
+
+def _require_revision(revision: int) -> None:
+    if revision < 0:
+        raise InvalidFieldError(f"revision must be >= 0, got {revision}")
+
+
+def _require_published(ts_published_ns: int, ts_event_ns: int) -> None:
+    require_time_ns(ts_published_ns, "ts_published_ns")
+    if ts_published_ns < ts_event_ns:
+        raise InvalidFieldError("ts_published_ns must not precede ts_event_ns")
 
 
 class Aggressor(StrEnum):
@@ -66,6 +83,7 @@ class Bar(Event, frozen=True, tag="market.bar.v1"):
     """Aggregated bar over ``[start_ns, start_ns + interval_ns)``.
 
     ``ts_event_ns`` is the end of the interval, when the bar became complete.
+    ``revision`` and ``ts_published_ns`` follow the module rules.
     """
 
     instrument_id: InstrumentId
@@ -76,10 +94,15 @@ class Bar(Event, frozen=True, tag="market.bar.v1"):
     low: Decimal
     close: Decimal
     volume: Decimal
+    revision: int = 0
+    ts_published_ns: int | None = None
 
     def __post_init__(self) -> None:
-        """Validate the interval, the price range and the volume."""
+        """Validate the interval, the price range, the volume and the revision."""
         super().__post_init__()
+        _require_revision(self.revision)
+        if self.ts_published_ns is not None:
+            _require_published(self.ts_published_ns, self.ts_event_ns)
         require_time_ns(self.start_ns, "start_ns")
         require_positive_int(self.interval_ns, "interval_ns")
         if self.ts_event_ns != self.start_ns + self.interval_ns:
@@ -88,3 +111,29 @@ class Bar(Event, frozen=True, tag="market.bar.v1"):
         require_non_negative(self.volume, "volume")
         if not self.low <= min(self.open, self.close) <= max(self.open, self.close) <= self.high:
             raise InvalidFieldError("bar prices must satisfy low <= open, close <= high")
+
+
+class ReferenceRate(Event, frozen=True, tag="market.reference_rate.v1"):
+    """One published observation of a reference series (BP4 section 4.4).
+
+    ``ts_event_ns`` is the observation time stated by the publisher (e.g. noon
+    in New York for the H.10 rates); ``ts_published_ns`` is when the value
+    became available (required: every reference source states or implies a
+    publication time). ``unit`` states the quote convention as published, e.g.
+    ``USD per EUR`` or ``percent``; the value keeps the published digits.
+    """
+
+    series_id: SeriesId
+    value: Decimal
+    unit: str
+    ts_published_ns: int
+    revision: int = 0
+
+    def __post_init__(self) -> None:
+        """Validate the value, the unit, the publication time and the revision."""
+        super().__post_init__()
+        require_decimals(value=self.value)
+        if not self.unit.strip() or self.unit != self.unit.strip():
+            raise InvalidFieldError(f"unit {self.unit!r} must be non-empty and trimmed")
+        _require_published(self.ts_published_ns, self.ts_event_ns)
+        _require_revision(self.revision)
