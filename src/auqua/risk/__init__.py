@@ -4,6 +4,6 @@
 
 The authoritative pre-trade risk gate and per-asset-class exposure measures.
 
-Owned by BP7, Pre-Trade Risk. Modules are added by that Blueprint's implementation
-slice.
+Owned by BP7, Pre-Trade Risk. Walking-skeleton (thin) module: ``gate`` (ADR 0025);
+further modules are added by that Blueprint's implementation slice.
 """

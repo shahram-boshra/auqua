@@ -34,6 +34,16 @@ from auqua.contracts.events import (
 from auqua.contracts.events.base import Event, LogRecord
 from auqua.contracts.events.lifecycle import CorporateActionKind
 from auqua.contracts.events.market import Aggressor
+from auqua.contracts.events.trading import (
+    Fill,
+    OrderSubmitted,
+    OrderType,
+    RiskDecision,
+    RunStarted,
+    Side,
+    Signal,
+    Target,
+)
 from auqua.contracts.identity import InstrumentId, new_id
 from auqua.contracts.instruments import CryptoSpot, Identifiers, Settlement
 
@@ -164,7 +174,87 @@ def _examples() -> list[Event]:
             currency="USD",
         ),
         InstrumentDefined(**_common(new_id()), instrument=_crypto_spot(knowledge_ns=T0)),
+        *_trading_examples(),
     ]
+
+
+def _trading_examples() -> list[Event]:
+    """One instance of each walking-skeleton event type (ADR 0025)."""
+    cause = new_id()
+    digest = "0" * 64
+    return [
+        RunStarted(
+            **_common(new_id()),
+            input_head_hash=digest,
+            input_next_sequence=0,
+            instrument_id=BTC,
+            instrument_sha256=digest,
+            config_id=digest,
+            spec_id=digest,
+            risk_limits_sha256=digest,
+            code_id=digest,
+            code_version="0.1.0",
+        ),
+        Signal(
+            **_common(new_id()),
+            causation_id=cause,
+            instrument_id=BTC,
+            direction=1,
+            provider="baseline/ma-crossover",
+            provider_version="1",
+        ),
+        Target(**_common(new_id()), causation_id=cause, instrument_id=BTC, quantity=Decimal(1)),
+        OrderSubmitted(
+            **_common(new_id()),
+            causation_id=cause,
+            instrument_id=BTC,
+            side=Side.BUY,
+            quantity=Decimal(1),
+            order_type=OrderType.MARKET,
+        ),
+        RiskDecision(
+            **_common(new_id()),
+            causation_id=cause,
+            instrument_id=BTC,
+            accepted=False,
+            rule="max_order_notional",
+            limit=Decimal(100),
+            value=Decimal(150),
+        ),
+        Fill(
+            **_common(new_id()),
+            causation_id=cause,
+            instrument_id=BTC,
+            side=Side.SELL,
+            price=Decimal("93800.10"),
+            quantity=Decimal(1),
+            fee=Decimal("9.38"),
+            fee_currency="USDT",
+        ),
+    ]
+
+
+def test_trading_event_rules() -> None:
+    """Directions, rejections and hashes are validated (ADR 0025)."""
+    with pytest.raises(InvalidFieldError, match="direction"):
+        Signal(
+            **_common(new_id()),
+            causation_id=new_id(),
+            instrument_id=BTC,
+            direction=2,
+            provider="p",
+            provider_version="1",
+        )
+    with pytest.raises(InvalidFieldError, match="rejection"):
+        RiskDecision(
+            **_common(new_id()),
+            causation_id=new_id(),
+            instrument_id=BTC,
+            accepted=False,
+            rule="max_position",
+        )
+    with pytest.raises(InvalidFieldError, match="hex"):
+        msgspec.structs.replace(_trading_examples()[0], config_id="X" * 64)
 
 
 def _crypto_spot(knowledge_ns: int) -> CryptoSpot:

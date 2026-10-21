@@ -4,5 +4,6 @@
 
 Historical and live market-data adapters producing canonical events.
 
-Owned by BP4, Ingestion. Modules are added by that Blueprint's implementation slice.
+Owned by BP4, Ingestion. Walking-skeleton (thin) module: ``kline_csv`` (ADR 0025);
+further modules are added by that Blueprint's implementation slice.
 """

@@ -38,6 +38,14 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   `reference.instrument.v1` event (ADRs 0021-0023). Runtime dependencies
   `pyarrow` and `duckdb`; configuration schema version 2 adds the `storage`
   section.
+- Walking skeleton (ADR 0025): kline CSV ingestion, a moving-average crossover
+  baseline signal, portfolio target and book, a pre-trade risk gate, a
+  simulated venue and a static HTML report, joined by a backtest runner that
+  logs every decision in its own event log. Six canonical event types
+  (`research.run.v1`, `alpha.signal.v1`, `portfolio.target.v1`,
+  `order.submitted.v1`, `risk.decision.v1`, `execution.fill.v1`) and
+  name-based UUIDv8 identifiers for reproducible records. Tests use synthetic
+  first-party data only.
 - The runtime licence gate accepts a dependency without a declared licence
   expression only through a recorded concluded licence bound to its version and
   licence-file hashes (ADR 0024).

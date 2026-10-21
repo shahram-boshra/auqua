@@ -4,6 +4,6 @@
 
 Order lifecycle, the internal simulated venue and the broker adapter boundary.
 
-Owned by BP8, Execution & Simulated Venue. Modules are added by that Blueprint's
-implementation slice.
+Owned by BP8, Execution & Simulated Venue. Walking-skeleton (thin) module: ``simulated``
+(ADR 0025); further modules are added by that Blueprint's implementation slice.
 """

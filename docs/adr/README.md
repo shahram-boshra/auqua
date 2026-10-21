@@ -33,3 +33,4 @@ Format: Michael Nygard (title, status, context, decision, consequences). Numbers
 | [0022](0022-analytical-datasets-and-query-engine.md) | Analytical datasets and query engine | Accepted |
 | [0023](0023-transactional-store-and-point-in-time-reference-data.md) | Transactional store and point-in-time reference data | Accepted |
 | [0024](0024-concluded-licence-for-dependencies-without-a-declared-expression.md) | Concluded licence for dependencies without a declared expression | Accepted |
+| [0025](0025-walking-skeleton.md) | Walking skeleton | Accepted |

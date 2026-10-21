@@ -4,8 +4,12 @@
 
 Events, commands, orders and fills are identified by UUIDv7 values (RFC 9562).
 Identifiers never order anything: order is the event log's ``sequence``.
+Identifiers that must be reproducible (ingested records without a source id,
+events derived by a run) are name-based UUIDv8 values (:func:`derived_id`;
+ADR 0025).
 """
 
+import hashlib
 import re
 import uuid
 
@@ -26,6 +30,30 @@ _SEPARATOR = ":"
 def new_id() -> uuid.UUID:
     """A new UUIDv7 (time-ordered; monotonic within a millisecond)."""
     return uuid.uuid7()
+
+
+_UUID_BYTES = 16
+_LENGTH_BYTES = 4
+
+
+def derived_id(namespace: uuid.UUID, *parts: bytes) -> uuid.UUID:
+    """A deterministic name-based UUIDv8 from SHA-256 (RFC 9562 sections 5.5 and 5.8).
+
+    The name is the parts, each prefixed with its 4-byte big-endian length so
+    that different part lists never produce the same name. As for UUIDv5, the
+    hash covers the namespace followed by the name and the leftmost 128 bits
+    are kept; SHA-256 replaces SHA-1, so the value lies in the UUIDv8 space
+    (section 5.5) with the version and variant bits set (section 5.8). Equal
+    inputs always give equal identifiers (section 6.5).
+    """
+    digest = hashlib.sha256(namespace.bytes)
+    for part in parts:
+        digest.update(len(part).to_bytes(_LENGTH_BYTES, "big"))
+        digest.update(part)
+    raw = bytearray(digest.digest()[:_UUID_BYTES])
+    raw[6] = (raw[6] & 0x0F) | 0x80  # version 8
+    raw[8] = (raw[8] & 0x3F) | 0x80  # variant 0b10
+    return uuid.UUID(bytes=bytes(raw))
 
 
 def require_source(source: str) -> None:
