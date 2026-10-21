@@ -9,13 +9,16 @@ what came out (counts). Missing intervals are recorded as :class:`DataGap`
 events and never filled.
 """
 
+import re
 from enum import StrEnum
 
 from auqua.contracts.errors import InvalidFieldError
 from auqua.contracts.events.base import Event
-from auqua.contracts.validation import require_positive_int, require_time_ns
+from auqua.contracts.validation import require_match, require_positive_int, require_time_ns
 
 _SHA256_HEX = 64
+#: ISO 3166-1 alpha-2 country codes.
+COUNTRY_CODE = re.compile(r"[A-Z]{2}")
 
 
 def require_sha256_hex(value: str, name: str) -> None:
@@ -76,7 +79,8 @@ class IngestRun(Event, frozen=True, tag="ingest.run.v1"):
     ``appended`` new records, ``duplicates`` records already stored with the
     same content, ``revisions`` records stored as a new revision, ``gaps``
     :class:`DataGap` events, ``unavailable`` records without a known
-    availability time.
+    availability time. ``jurisdiction`` is the operator's declared country of
+    residence and access under which the source was cleared (ADR 0029).
     """
 
     profile: str
@@ -97,6 +101,7 @@ class IngestRun(Event, frozen=True, tag="ingest.run.v1"):
     gaps: int = 0
     unavailable: int = 0
     message: str | None = None
+    jurisdiction: str | None = None
 
     def __post_init__(self) -> None:
         """Validate hashes and counts."""
@@ -109,6 +114,8 @@ class IngestRun(Event, frozen=True, tag="ingest.run.v1"):
         for name in ("profile", "terms", "retrieval", "parser", "parser_version"):
             if not getattr(self, name):
                 raise InvalidFieldError(f"{name} must not be empty")
+        if self.jurisdiction is not None:
+            require_match(self.jurisdiction, COUNTRY_CODE, "jurisdiction")
 
 
 class DataGap(Event, frozen=True, tag="data.gap.v1"):

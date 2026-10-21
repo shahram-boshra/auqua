@@ -152,6 +152,7 @@ class IngestRunner:
                 profile=profile.name,
                 terms=profile.terms,
                 use_class=declaration.use_class,
+                jurisdiction=self._config.jurisdiction,
                 raw_sha256=raw.raw.sha256,
                 raw_size=raw.raw.size,
                 retrieval=raw.retrieval,

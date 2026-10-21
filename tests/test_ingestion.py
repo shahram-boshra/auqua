@@ -7,6 +7,7 @@ provider's documented layout (decision log a28, I-1): no third-party data is
 used or committed.
 """
 
+import dataclasses
 import datetime
 import email.message
 import hashlib
@@ -28,8 +29,10 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from auqua.config.base import Environment
+from auqua.config.errors import ConfigValidationError
 from auqua.config.ingestion import IngestionConfig, SourceAcknowledgement
 from auqua.config.loader import load_root
+from auqua.config.root import CONFIG_MIGRATIONS
 from auqua.config.storage import StorageConfig
 from auqua.contracts.events.base import Event, LogRecord
 from auqua.contracts.events.ingest import (
@@ -50,6 +53,7 @@ from auqua.ingestion.cli import main
 from auqua.ingestion.errors import (
     ChecksumError,
     FetchError,
+    NotEligibleError,
     ParseError,
     PermitError,
     TermsNotAcknowledgedError,
@@ -72,6 +76,7 @@ from auqua.ingestion.sources import (
     COINBASE_CANDLES,
     FRB_H10,
     USTREASURY_PAR,
+    Clearance,
     Purpose,
     Sharing,
     attributions,
@@ -100,6 +105,11 @@ BTC = CryptoSpot(
     identifiers=Identifiers(),
     base_currency="BTC",
 )
+#: Binance Vision as if it were cleared for the US: only for tests of checksum and
+#: purpose rules that run after eligibility (the shipped profile is not cleared, a32).
+BINANCE_CLEARED = dataclasses.replace(
+    BINANCE_VISION_KLINES, eligibility=(Clearance("US", cleared=True, basis="test"),)
+)
 ALL_SOURCES = {
     profile.name: SourceAcknowledgement(use_class=use, acknowledged_terms=profile.terms)
     for profile, use in (
@@ -109,6 +119,8 @@ ALL_SOURCES = {
         (USTREASURY_PAR, UseClass.UNRESTRICTED),
     )
 }
+US_CONFIG = IngestionConfig(jurisdiction="US", sources=ALL_SOURCES)
+JURISDICTION = '\n[ingestion]\njurisdiction = "US"\n'
 
 
 class SteppingClock:
@@ -183,7 +195,7 @@ class Rig:
 @pytest.fixture
 def rig(tmp_path: Path) -> Iterator[Rig]:
     """A rig with every source enabled."""
-    opened = Rig(tmp_path, SteppingClock(T0 + 30 * 24 * HOUR), IngestionConfig(sources=ALL_SOURCES))
+    opened = Rig(tmp_path, SteppingClock(T0 + 30 * 24 * HOUR), US_CONFIG)
     yield opened
     opened.close()
 
@@ -431,7 +443,7 @@ def test_provider_checksum_verified_and_mismatch_rejected(rig: Rig) -> None:
         time_unit=TimeUnit.MILLISECONDS,
     )
     with pytest.raises(ChecksumError):
-        rig.ingest(BINANCE_VISION_KLINES, binance.PARSER, data, context, ChecksumResult.MISMATCH)
+        rig.ingest(BINANCE_CLEARED, binance.PARSER, data, context, ChecksumResult.MISMATCH)
     runs = [e for e in rig.events() if isinstance(e, IngestRun)]
     assert [(r.outcome, r.checksum) for r in runs] == [
         (RunOutcome.REJECTED, ChecksumResult.MISMATCH)
@@ -647,10 +659,10 @@ def test_runner_refuses_before_writing(tmp_path: Path) -> None:
             UST_CONTEXT,
         ),
         (
-            IngestionConfig(sources=ALL_SOURCES),
+            US_CONFIG,
             Environment.PAPER,
             PermitError,
-            BINANCE_VISION_KLINES,
+            BINANCE_CLEARED,
             binance.PARSER,
             klines([0]),
             ParseContext(
@@ -670,6 +682,42 @@ def test_runner_refuses_before_writing(tmp_path: Path) -> None:
             assert rig.events() == []
         finally:
             rig.close()
+
+
+def test_eligibility_by_jurisdiction(tmp_path: Path) -> None:
+    """No jurisdiction, one not assessed, or one not cleared: refused before writing (ADR 0029)."""
+    data = treasury(["10/02/2026,4.10,5.00"])
+    context = ParseContext(
+        source="ingest/binance/vision",
+        ingest_ns=0,
+        instrument=BTC,
+        interval_ns=MINUTE,
+        time_unit=TimeUnit.MILLISECONDS,
+    )
+    cases: list[tuple[str | None, object, ParserSpec, bytes, ParseContext, str]] = [
+        (None, USTREASURY_PAR, ustreasury_par.PARSER, data, UST_CONTEXT, "set ingestion"),
+        ("DE", USTREASURY_PAR, ustreasury_par.PARSER, data, UST_CONTEXT, "not been assessed"),
+        ("US", BINANCE_VISION_KLINES, binance.PARSER, klines([0]), context, "not cleared"),
+    ]
+    for index, (jurisdiction, profile, parser, payload, ctx, match) in enumerate(cases):
+        config = IngestionConfig(jurisdiction=jurisdiction, sources=ALL_SOURCES)
+        rig = Rig(tmp_path / str(index), SteppingClock(T0), config)
+        try:
+            with pytest.raises(NotEligibleError, match=match):
+                rig.ingest(profile, parser, payload, ctx)
+            assert rig.events() == []
+        finally:
+            rig.close()
+    assert COINBASE_CANDLES.clearance("US") is not None
+    assert all(p.clearance("US") is not None for p in (FRB_H10, USTREASURY_PAR))
+
+
+def test_run_record_names_the_jurisdiction(rig: Rig) -> None:
+    """The lineage record carries the jurisdiction the source was cleared for (ADR 0029)."""
+    run = rig.ingest(
+        USTREASURY_PAR, ustreasury_par.PARSER, treasury(["10/02/2026,4.1,5"]), UST_CONTEXT
+    )
+    assert run.jurisdiction == "US"
 
 
 # --- J9 availability -----------------------------------------------------------------------------
@@ -899,7 +947,7 @@ class _CrashingLog:
 
 def test_crash_between_batches_then_rerun_completes(tmp_path: Path) -> None:
     """Batches already stored are duplicates on the re-run, which completes the run (J11)."""
-    config = IngestionConfig(sources=ALL_SOURCES, batch_events=2)
+    config = IngestionConfig(jurisdiction="US", sources=ALL_SOURCES, batch_events=2)
     rig = Rig(tmp_path, SteppingClock(T0 + 30 * 24 * HOUR), config)
     data = h10(H10_WEEK[:3])
     try:
@@ -951,10 +999,11 @@ def _config_root(tmp_path: Path, version: int, extra: str = "") -> Path:
 
 
 def test_config_version_2_migrates_to_ingestion_defaults(tmp_path: Path) -> None:
-    """Version 2 has no ``ingestion`` section; it migrates to version 3 with defaults (J12)."""
+    """Version 2 has no ``ingestion`` section; it migrates with defaults (J12, ADR 0029)."""
     config = load_root(ENV, _config_root(tmp_path, 2), environ={})
-    assert config.schema_version == 3  # noqa: PLR2004
+    assert config.schema_version == CONFIG_MIGRATIONS.current
     assert config.ingestion == IngestionConfig()
+    assert config.ingestion.jurisdiction is None
     assert config.ingestion.rate_limits == {"coinbase/exchange/candles": Decimal(3)}
     extra = (
         '\n[ingestion.sources."frb/h10/daily"]\n'
@@ -962,6 +1011,12 @@ def test_config_version_2_migrates_to_ingestion_defaults(tmp_path: Path) -> None
     )
     config = load_root(ENV, _config_root(tmp_path, 3, extra), environ={})
     assert config.ingestion.sources["frb/h10/daily"].use_class is UseClass.UNRESTRICTED
+    config = load_root(ENV, _config_root(tmp_path, 4, JURISDICTION + extra), environ={})
+    assert config.ingestion.jurisdiction == "US"
+    with pytest.raises(ConfigValidationError, match="jurisdiction"):
+        load_root(
+            ENV, _config_root(tmp_path, 4, '\n[ingestion]\njurisdiction = "usa"\n'), environ={}
+        )
 
 
 def test_reference_rates_export_to_a_series_partitioned_dataset(rig: Rig, tmp_path: Path) -> None:
@@ -979,14 +1034,18 @@ def test_command_line_runs_and_refusals(tmp_path: Path, capsys: pytest.CaptureFi
     """Local files ingest; a source not enabled is refused; ``runs`` verifies the log (J12)."""
     csv_path = tmp_path / "h10.csv"
     csv_path.write_bytes(h10(H10_WEEK[:2]))
-    base = ["--config-root", str(_config_root(tmp_path, 3)), "--environment", "research"]
+    base = ["--config-root", str(_config_root(tmp_path, 4)), "--environment", "research"]
     assert main([*base, "h10", str(csv_path)]) == 1
     assert "is not enabled" in capsys.readouterr().err
     extra = (
         '\n[ingestion.sources."frb/h10/daily"]\n'
         'use_class = "unrestricted"\nacknowledged_terms = "undated, read 2026-10-21"\n'
     )
-    base = ["--config-root", str(_config_root(tmp_path, 3, extra)), "--environment", "research"]
+    base = ["--config-root", str(_config_root(tmp_path, 4, extra)), "--environment", "research"]
+    assert main([*base, "h10", str(csv_path)]) == 1
+    assert "set ingestion.jurisdiction" in capsys.readouterr().err
+    config_root = _config_root(tmp_path, 4, JURISDICTION + extra)
+    base = ["--config-root", str(config_root), "--environment", "research"]
     assert main([*base, "h10", str(csv_path)]) == 0
     assert main([*base, "h10", str(csv_path)]) == 0
     assert main([*base, "runs"]) == 0

@@ -10,6 +10,12 @@ they ship no data. The platform states the terms and enforces the profile; the
 operator decides, by naming the source and the terms version they accept in
 the configuration. A newer shipped terms date stops ingestion until the
 operator acknowledges it.
+
+Eligibility (ADR 0029): provider terms and sanctions law decide who may use a
+source by where the user resides and accesses it from. Each profile lists the
+jurisdictions the project has assessed, cleared or not, with the basis; a
+jurisdiction not assessed is refused (fail closed), and so is a configuration
+without a jurisdiction.
 """
 
 from dataclasses import dataclass
@@ -17,7 +23,7 @@ from enum import StrEnum
 
 from auqua.config.base import Environment
 from auqua.config.ingestion import IngestionConfig, SourceAcknowledgement
-from auqua.ingestion.errors import PermitError, TermsNotAcknowledgedError
+from auqua.ingestion.errors import NotEligibleError, PermitError, TermsNotAcknowledgedError
 
 
 class Purpose(StrEnum):
@@ -58,6 +64,21 @@ ENVIRONMENT_PURPOSE = {
 
 
 @dataclass(frozen=True)
+class Clearance:
+    """The assessment of one jurisdiction for a source.
+
+    Attributes:
+        jurisdiction: ISO 3166-1 alpha-2 code of residence and access, e.g. ``US``.
+        cleared: Whether the terms and the law allow use from there.
+        basis: What the assessment rests on.
+    """
+
+    jurisdiction: str
+    cleared: bool
+    basis: str
+
+
+@dataclass(frozen=True)
 class SourceProfile:
     """Permitted use of one source, from its terms as read on ``read_on``.
 
@@ -72,6 +93,7 @@ class SourceProfile:
         sharing: Sharing of derived outputs.
         attribution: Attribution the terms require, if any.
         basis: Clauses the profile rests on.
+        eligibility: Jurisdictions assessed (ADR 0029); any other is refused.
     """
 
     name: str
@@ -84,6 +106,11 @@ class SourceProfile:
     sharing: Sharing
     attribution: str | None
     basis: str
+    eligibility: tuple[Clearance, ...]
+
+    def clearance(self, jurisdiction: str) -> Clearance | None:
+        """The assessment of ``jurisdiction``, or ``None`` when not assessed."""
+        return next((c for c in self.eligibility if c.jurisdiction == jurisdiction), None)
 
 
 COINBASE_CANDLES = SourceProfile(
@@ -101,6 +128,16 @@ COINBASE_CANDLES = SourceProfile(
         "purposes'; no redistribution of data or derived works; section 3.5: no use to "
         "develop, train, fine-tune, teach, validate or benchmark any artificial intelligence"
     ),
+    eligibility=(
+        Clearance(
+            "US",
+            cleared=True,
+            basis=(
+                "Market Data Terms: use 'in accordance with applicable law', governed by the "
+                "laws of the State of California; no jurisdiction excluded; US provider"
+            ),
+        ),
+    ),
 )
 BINANCE_VISION_KLINES = SourceProfile(
     name="binance/vision/klines",
@@ -116,6 +153,17 @@ BINANCE_VISION_KLINES = SourceProfile(
         "Vision Terms of Use v1.0: CC BY-NC-SA 4.0 (cl. 3.1); personal non-production "
         "backtesting (cl. 4.1); no live proprietary trading execution (cl. 4.2); no "
         "hosting (cl. 4.3); derivatives share-alike with attribution (cl. 4.5)"
+    ),
+    eligibility=(
+        Clearance(
+            "US",
+            cleared=False,
+            basis=(
+                "Vision Terms cl. 1.2: 'subject to the Binance Terms of Use', accepted by using "
+                "the data (cl. 1.4); the Binance.com platform has been closed to U.S. users "
+                "since September 2019; no provision permits use from the United States"
+            ),
+        ),
     ),
 )
 FRB_H10 = SourceProfile(
@@ -133,6 +181,13 @@ FRB_H10 = SourceProfile(
         "distributed without permission unless otherwise indicated; the Board asks to be "
         "cited as the source"
     ),
+    eligibility=(
+        Clearance(
+            "US",
+            cleared=True,
+            basis="Information published by a US federal agency on its website",
+        ),
+    ),
 )
 USTREASURY_PAR = SourceProfile(
     name="ustreasury/par-yield",
@@ -145,6 +200,13 @@ USTREASURY_PAR = SourceProfile(
     sharing=Sharing.ALLOWED,
     attribution=None,
     basis="Works of the U.S. Government are not subject to copyright (17 U.S.C. 105)",
+    eligibility=(
+        Clearance(
+            "US",
+            cleared=True,
+            basis="Work of the US Government published by the Treasury (17 U.S.C. 105)",
+        ),
+    ),
 )
 PROFILES: dict[str, SourceProfile] = {
     p.name: p for p in (COINBASE_CANDLES, BINANCE_VISION_KLINES, FRB_H10, USTREASURY_PAR)
@@ -152,11 +214,12 @@ PROFILES: dict[str, SourceProfile] = {
 
 
 def acknowledged(profile: SourceProfile, config: IngestionConfig) -> SourceAcknowledgement:
-    """The operator's declaration for ``profile``.
+    """The operator's declaration for ``profile``, once the source is cleared for them.
 
     Raises:
         TermsNotAcknowledgedError: the source is not configured, or the
             acknowledged terms differ from the profile's terms.
+        NotEligibleError: see :func:`require_eligible`.
     """
     declaration = config.sources.get(profile.name)
     if declaration is None:
@@ -171,7 +234,34 @@ def acknowledged(profile: SourceProfile, config: IngestionConfig) -> SourceAckno
             f"profile terms {profile.terms!r}; read {profile.terms_url} and update the "
             "acknowledgement"
         )
+    require_eligible(profile, config)
     return declaration
+
+
+def require_eligible(profile: SourceProfile, config: IngestionConfig) -> Clearance:
+    """The clearance of the configured jurisdiction for ``profile``.
+
+    Raises:
+        NotEligibleError: no jurisdiction configured, the jurisdiction was not
+            assessed for this source, or it was assessed and not cleared.
+    """
+    jurisdiction = config.jurisdiction
+    if jurisdiction is None:
+        raise NotEligibleError(
+            f"{profile.name}: set ingestion.jurisdiction (ISO 3166-1 alpha-2 code of the "
+            "country you reside in and access the provider from)"
+        )
+    clearance = profile.clearance(jurisdiction)
+    if clearance is None:
+        raise NotEligibleError(
+            f"{profile.name}: eligibility from {jurisdiction} has not been assessed; "
+            "the source is refused until it is (ADR 0029)"
+        )
+    if not clearance.cleared:
+        raise NotEligibleError(
+            f"{profile.name}: not cleared for use from {jurisdiction}; {clearance.basis}"
+        )
+    return clearance
 
 
 def permit(profile: SourceProfile, purpose: Purpose, *, ml: bool = False) -> None:

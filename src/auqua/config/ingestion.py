@@ -45,6 +45,9 @@ class IngestionConfig(ConfigModel):
     """Sources the operator enabled and the bounds of fetching and ingestion.
 
     Attributes:
+        jurisdiction: ISO 3166-1 alpha-2 code of the country the operator resides
+            in and accesses the providers from (decision log a32; ADR 0029);
+            unset means no source is cleared.
         sources: Source profile name → declaration; empty means nothing runs.
         http_timeout_s: Timeout of one HTTP request.
         max_attempts: Attempts per request, the first included.
@@ -58,6 +61,7 @@ class IngestionConfig(ConfigModel):
             day after the observation date (BP4 section 4.6).
     """
 
+    jurisdiction: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
     sources: dict[str, SourceAcknowledgement] = Field(default_factory=dict)
     http_timeout_s: PositiveInt = 30
     max_attempts: PositiveInt = 6

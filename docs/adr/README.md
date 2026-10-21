@@ -37,3 +37,4 @@ Format: Michael Nygard (title, status, context, decision, consequences). Numbers
 | [0026](0026-ingestion-raw-store-idempotency-and-revisions.md) | Ingestion: raw store, idempotency and revisions | Accepted |
 | [0027](0027-data-source-terms-and-permitted-use.md) | Data-source terms and permitted use | Accepted |
 | [0028](0028-availability-time.md) | Availability time | Accepted |
+| [0029](0029-data-source-eligibility-by-jurisdiction.md) | Data-source eligibility by jurisdiction | Accepted |

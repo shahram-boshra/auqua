@@ -969,7 +969,7 @@
     },
     "IngestRun": {
       "additionalProperties": false,
-      "description": "Lineage record of one ingestion run, appended after the run's records.\n\nThe run key is (``profile``, ``raw_sha256``, ``parser_id``). Counts:\n``appended`` new records, ``duplicates`` records already stored with the\nsame content, ``revisions`` records stored as a new revision, ``gaps``\n:class:`DataGap` events, ``unavailable`` records without a known\navailability time.",
+      "description": "Lineage record of one ingestion run, appended after the run's records.\n\nThe run key is (``profile``, ``raw_sha256``, ``parser_id``). Counts:\n``appended`` new records, ``duplicates`` records already stored with the\nsame content, ``revisions`` records stored as a new revision, ``gaps``\n:class:`DataGap` events, ``unavailable`` records without a known\navailability time. ``jurisdiction`` is the operator's declared country of\nresidence and access under which the source was cleared (ADR 0029).",
       "properties": {
         "appended": {
           "default": 0,
@@ -992,6 +992,17 @@
         "id": {
           "format": "uuid",
           "type": "string"
+        },
+        "jurisdiction": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "message": {
           "anyOf": [

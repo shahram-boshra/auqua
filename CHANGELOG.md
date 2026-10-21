@@ -63,6 +63,12 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
 
 ### Changed
 
+- Data sources are cleared per jurisdiction: the configuration declares the
+  operator's country of residence and access (`ingestion.jurisdiction`,
+  schema version 4), each source profile records the jurisdictions assessed,
+  and ingestion refuses a source not cleared for it before fetching; lineage
+  records name the jurisdiction (ADR 0029). For the United States, Binance
+  Vision is not cleared.
 - Bars carry an optional `revision` and publication time, and their ids now
   include the interval, so bars of different intervals never collide (BP4).
   The skeleton's kline reader moved to `auqua.ingestion.parsers`.
