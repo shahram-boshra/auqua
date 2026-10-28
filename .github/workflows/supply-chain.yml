@@ -15,6 +15,8 @@ on:
     branches: [main]
   schedule:
     - cron: "17 3 * * 1"
+env:
+  UV_VERSION: "0.13.5"  # exact uv for CI; pyproject.toml holds only a floor (ADR 0033)
 permissions:
   contents: read
 jobs:
@@ -26,6 +28,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
       # Licence gate on the runtime environment (no development group).
       - run: uv sync --locked --no-dev
       - run: uv run --locked --no-dev python tools/license_policy.py --scope runtime

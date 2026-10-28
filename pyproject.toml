@@ -45,7 +45,10 @@ requires = ["uv_build>=0.13.1,<0.14"]
 build-backend = "uv_build"
 
 [tool.uv]
-required-version = "==0.13.1"
+# A floor, not an exact pin (ADR 0033): Dependabot runs only its own uv and
+# refuses a project whose required-version excludes it. CI installs the exact
+# uv from UV_VERSION in each workflow.
+required-version = ">=0.13.5"
 
 [tool.ruff]
 line-length = 100
