@@ -103,6 +103,14 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   (`cooldown`); security fixes are exempt. The supply-chain workflow runs
   Trivy even when grype has failed, so a run reports both scanners' findings.
 
+### Fixed
+
+- The scanner environment (`tools/`) now pins Python 3.14 with its own
+  `.python-version`. uv does not apply the root file to the separate `tools`
+  project, so a runner without Python 3.14 resolved its `requires-python`
+  (`>=3.14`) to the newest download (3.15.1 in the CI `provenance` job), and
+  local and CI scanner environments could differ (ADR 0010).
+
 ### Security
 
 - `certifi` 2026.7.22 → 2026.10.19 in the development and scanner lock files
