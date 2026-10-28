@@ -39,7 +39,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "scancode-toolkit", specifier = "==32.5.0" },
-    { name = "scanoss", specifier = "==1.54.2" },
+    { name = "scanoss", specifier = "==1.54.3" },
 ]
 
 [[package]]
@@ -1734,7 +1734,7 @@ wheels = [
 
 [[package]]
 name = "scanoss"
-version = "1.54.2"
+version = "1.54.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "binaryornot" },
@@ -1754,9 +1754,9 @@ dependencies = [
     { name = "pypac" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/55/02/09eb74f91ac2ce99c418a9003e65453ab339494e626aa36d59faa12d5fe7/scanoss-1.54.2.tar.gz", hash = "sha256:2fd6ed13b6440540553ae7bcc6997fae08b0c13711cd0ae091c348d244521cc0", size = 259521, upload-time = "2026-07-21T07:36:00.482Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/75/66/1cd56a0f461fd4ccab153a4cc0b4a9a0e27668dac27cbd70bcee7a110aaf/scanoss-1.54.3.tar.gz", hash = "sha256:713ca50e4b25280cd500bdf8d69af5c4e392a799ac213aff4cedf97807bb624b", size = 261789, upload-time = "2026-10-20T16:00:34.171Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/74/b5b0e8a9aed3f64be83d410c65c81aead8b8c844b434728a1fbcf6e3f3f4/scanoss-1.54.2-py3-none-any.whl", hash = "sha256:52d84163d1af52f6540d20d6df06c147e540f789f7f5836d0cbcf161bcbf6198", size = 299753, upload-time = "2026-07-21T07:35:59.021Z" },
+    { url = "https://files.pythonhosted.org/packages/68/f1/9d8951b9c1efb31ca8161d8ec704fcd68f58cb1b8eecad0a96d18de12f47/scanoss-1.54.3-py3-none-any.whl", hash = "sha256:0adfb9273f23e8f96271fa7304d15f8b6412e2966a1981336f25069c7e9a5add", size = 300927, upload-time = "2026-10-20T16:00:32.459Z" },
 ]
 
 [[package]]
