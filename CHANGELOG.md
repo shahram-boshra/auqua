@@ -79,14 +79,17 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
 - uv 0.13.1 → 0.13.5. CI installs the exact version from `UV_VERSION`;
   `required-version` is now a floor (`>=0.13.5`), so Dependabot can update the
   lock files again (ADR 0033, superseding the uv part of ADR 0010). Dependabot
-  proposes only releases at least 7 days old (`cooldown`).
+  proposes version updates only for releases at least 7 days old
+  (`cooldown`); security fixes are exempt. The supply-chain workflow runs
+  Trivy even when grype has failed, so a run reports both scanners' findings.
 
 ### Security
 
 - `certifi` 2026.7.22 → 2026.10.19 in the development and scanner lock files
   (GHSA-6q48-6c7w-9gw2, critical: bundled emSign root CAs with compromised
   intermediate keys). `certifi` is not a runtime dependency.
-- `virtualenv` 21.14.8 → 21.14.11 and `filelock` 4.2.0 → 4.2.4 in the
+- `virtualenv` 21.14.8 → 21.14.13 and `filelock` 4.2.0 → 4.2.4 in the
   development lock file (high: GHSA-c978-59m8-c77v, GHSA-394h-qwmc-48pf,
-  GHSA-6w3r-xr62-4xcp, GHSA-v4x8-3wr5-3wq8; with medium and low advisories
-  fixed in the same releases). Neither is a runtime dependency.
+  GHSA-6w3r-xr62-4xcp, GHSA-cx6f-vjhg-g3cc, GHSA-v4x8-3wr5-3wq8; with medium
+  and low advisories fixed in the same releases). Neither is a runtime
+  dependency.
