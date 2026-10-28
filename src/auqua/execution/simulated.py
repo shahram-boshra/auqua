@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: MIT
 """Simulated venue — walking skeleton (thin); owned and extended by BP8.
 
-Market orders accepted after bar *t* fill at the open of bar *t + 1*: an order
-never trades at a price that was known when it was decided (no look-ahead).
-The fee is a fixed rate in basis points of the notional, rounded once to the
-fee increment with an explicit mode (ADR 0016).
+Market orders accepted after bar *t* fill at the open of bar *t + 1 + delay*:
+an order never trades at a price that was known when it was decided (no
+look-ahead); ``delay_bars`` models latency (BP5 robustness sweep). Fill price
+and fee come from a :class:`~auqua.execution.costs.CostModel` (ADR 0032).
 """
 
 import uuid
@@ -14,9 +14,9 @@ from decimal import Decimal
 
 from auqua.contracts.events.market import Bar
 from auqua.contracts.events.trading import OrderSubmitted, Side
-from auqua.contracts.numeric import Rounding, arithmetic, quantize
-
-_BASIS_POINTS = Decimal(10_000)
+from auqua.contracts.identity import InstrumentId
+from auqua.contracts.numeric import arithmetic, require_increment
+from auqua.execution.costs import CostModel
 
 
 @dataclass(frozen=True)
@@ -32,30 +32,47 @@ class Execution:
 
 
 class SimulatedVenue:
-    """Fills pending market orders at the next bar's open."""
+    """Fills pending market orders at the open of a later bar."""
 
-    def __init__(self, fee_bps: Decimal, fee_increment: Decimal) -> None:
-        """Charge ``fee_bps`` basis points, rounded half-even to ``fee_increment``."""
-        if fee_bps < 0:
-            raise ValueError(f"fee_bps must be >= 0, got {fee_bps}")
-        self._fee_bps, self._fee_increment = fee_bps, fee_increment
-        self._pending: dict[uuid.UUID, OrderSubmitted] = {}
+    def __init__(self, costs: CostModel, price_increment: Decimal, delay_bars: int = 0) -> None:
+        """Price fills with ``costs`` on the ``price_increment`` grid after ``delay_bars`` bars."""
+        if delay_bars < 0:
+            raise ValueError(f"delay_bars must be >= 0, got {delay_bars}")
+        require_increment(price_increment, "price_increment")
+        self._costs, self._increment, self._delay = costs, price_increment, delay_bars
+        self._pending: dict[uuid.UUID, tuple[OrderSubmitted, int]] = {}
 
     def submit(self, order: OrderSubmitted) -> None:
-        """Queue ``order`` for the next bar."""
-        self._pending[order.id] = order
+        """Queue ``order``; it fills at the open of the ``1 + delay_bars``-th next bar."""
+        self._pending[order.id] = (order, self._delay)
+
+    def working(self, instrument_id: InstrumentId) -> Decimal:
+        """Signed quantity of the accepted, not yet filled orders of ``instrument_id``."""
+        with arithmetic():
+            return sum(
+                (
+                    order.quantity if order.side is Side.BUY else -order.quantity
+                    for order, _ in self._pending.values()
+                    if order.instrument_id == instrument_id
+                ),
+                Decimal(0),
+            )
 
     def on_bar(self, bar: Bar) -> list[Execution]:
-        """Fill the pending orders of ``bar``'s instrument at its open, in submission order."""
+        """Fill the due orders of ``bar``'s instrument at its open, in submission order."""
         executions = []
-        for order_id, order in list(self._pending.items()):
+        for order_id, (order, wait) in list(self._pending.items()):
             if order.instrument_id != bar.instrument_id:
                 continue
+            if wait:
+                self._pending[order_id] = (order, wait - 1)
+                continue
+            price = self._costs.fill_price(order.side, bar.open, self._increment)
             with arithmetic():
-                raw_fee = bar.open * order.quantity * self._fee_bps / _BASIS_POINTS
-            fee = quantize(raw_fee, self._fee_increment, Rounding.HALF_EVEN)
+                notional = price * order.quantity
+            fee = self._costs.fee(notional)
             executions.append(
-                Execution(order, order.side, bar.open, order.quantity, fee, bar.start_ns)
+                Execution(order, order.side, price, order.quantity, fee, bar.start_ns)
             )
             del self._pending[order_id]
         return executions

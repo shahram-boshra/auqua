@@ -52,11 +52,12 @@ from auqua.storage.errors import (
     WriterLockedError,
 )
 from auqua.storage.eventlog import EventLog
+from auqua.storage.files import PRIVATE_DIRECTORY, PRIVATE_FILE, write_private
 from auqua.storage.query import QuerySession
 from auqua.storage.reference import ReferenceIndex
 from auqua.storage.replay import EventLogReader, replay
 from auqua.storage.scaled import INT64_MAX, ScaledDecimal
-from auqua.storage.sqlite import PRIVATE_FILE, connect_reader
+from auqua.storage.sqlite import connect_reader
 from auqua.storage.store import StoreMigrations, StoreStep, open_store
 
 ENV = Environment.TEST
@@ -216,6 +217,31 @@ def test_single_writer_read_only_reader_and_settings(log: EventLog, log_path: Pa
     assert connection.execute("PRAGMA synchronous").fetchone()[0] == 2  # noqa: PLR2004 - FULL
     for path in (log_path, log_path.with_name(log_path.name + "-wal")):
         assert stat.S_IMODE(path.stat().st_mode) == PRIVATE_FILE
+
+
+def _mode(path: Path) -> int:
+    return stat.S_IMODE(path.stat().st_mode)
+
+
+def test_private_directories_and_files(tmp_path: Path) -> None:
+    """Every missing parent is 0700 and files are 0600, also over a wider existing file."""
+    nested = tmp_path / "a" / "b" / "event_log.sqlite3"
+    with EventLog(nested, ENV, busy_timeout_ms=TIMEOUT_MS) as opened:
+        opened.append([trade(0)])
+    assert {_mode(tmp_path / "a"), _mode(tmp_path / "a" / "b")} == {PRIVATE_DIRECTORY}
+    root = tmp_path / "x" / "datasets"
+    _export(nested, root, _config())
+    assert {_mode(p) for p in [tmp_path / "x", *root.rglob("*")] if p.is_dir()} == {
+        PRIVATE_DIRECTORY
+    }
+    assert {_mode(p) for p in root.rglob("*") if p.is_file()} == {PRIVATE_FILE}
+    wide = tmp_path / "out" / "report.html"
+    wide.parent.mkdir()
+    wide.write_text("old", encoding="utf-8")
+    wide.chmod(0o644)
+    write_private(wide, b"new")
+    assert (_mode(wide), wide.read_bytes()) == (PRIVATE_FILE, b"new")
+    assert not list(wide.parent.glob(".*.tmp"))
 
 
 def test_other_environment_refused(log_path: Path) -> None:

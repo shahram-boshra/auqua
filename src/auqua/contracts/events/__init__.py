@@ -20,6 +20,7 @@ from auqua.contracts.events.lifecycle import (
 )
 from auqua.contracts.events.market import Bar, Quote, ReferenceRate, Trade
 from auqua.contracts.events.reference import InstrumentDefined
+from auqua.contracts.events.research import RunStartedV2, Trial
 from auqua.contracts.events.trading import (
     Fill,
     OrderSubmitted,
@@ -43,7 +44,8 @@ CanonicalEvent = (
     | FundingPayment
     | CouponPayment
     | InstrumentDefined
-    | RunStarted
+    | RunStartedV2
+    | Trial
     | Signal
     | Target
     | OrderSubmitted
@@ -73,7 +75,9 @@ __all__ = [
     "ReferenceRate",
     "RiskDecision",
     "RunStarted",
+    "RunStartedV2",
     "Signal",
     "Target",
     "Trade",
+    "Trial",
 ]

@@ -1,0 +1,305 @@
+{
+  "$defs": {
+    "Check": {
+      "additionalProperties": false,
+      "description": "One integrity check and the value it rests on.",
+      "properties": {
+        "check": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "fail",
+            "pass",
+            "warn"
+          ]
+        },
+        "value": {}
+      },
+      "required": [
+        "check",
+        "status",
+        "value",
+        "note"
+      ],
+      "title": "Check",
+      "type": "object"
+    },
+    "ExperimentReport": {
+      "additionalProperties": false,
+      "description": "Report of :func:`auqua.analytics.experiment.run_experiment`.",
+      "properties": {
+        "assumptions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/Check"
+          },
+          "type": "array"
+        },
+        "hypothesis": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "inputs": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "enum": [
+            "experiment"
+          ]
+        },
+        "lineage": {
+          "$ref": "#/$defs/Lineage"
+        },
+        "pbo": {
+          "type": "object"
+        },
+        "ranking": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "selected": {
+          "type": "object"
+        },
+        "selection_validation": {
+          "type": "object"
+        },
+        "terms": {
+          "$ref": "#/$defs/Terms"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "title",
+        "hypothesis",
+        "terms",
+        "lineage",
+        "inputs",
+        "assumptions",
+        "checks",
+        "selected",
+        "ranking",
+        "pbo",
+        "selection_validation"
+      ],
+      "title": "ExperimentReport",
+      "type": "object"
+    },
+    "Lineage": {
+      "additionalProperties": false,
+      "description": "What makes the run reproducible.",
+      "properties": {
+        "code_id": {
+          "type": "string"
+        },
+        "code_version": {
+          "type": "string"
+        },
+        "config_id": {
+          "type": "string"
+        },
+        "input_head_hash": {
+          "type": "string"
+        },
+        "input_records": {
+          "type": "integer"
+        },
+        "instrument_id": {
+          "type": "string"
+        },
+        "instrument_sha256": {
+          "type": "string"
+        },
+        "interval_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "knowledge_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "python_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "risk_limits_sha256": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "spec_id": {
+          "type": "string"
+        },
+        "uv_lock_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "run_id",
+        "input_head_hash",
+        "input_records",
+        "knowledge_ns",
+        "instrument_id",
+        "interval_ns",
+        "instrument_sha256",
+        "config_id",
+        "spec_id",
+        "risk_limits_sha256",
+        "code_id",
+        "code_version",
+        "python_version",
+        "uv_lock_sha256",
+        "seed"
+      ],
+      "title": "Lineage",
+      "type": "object"
+    },
+    "Terms": {
+      "additionalProperties": false,
+      "description": "Sharing rule and attributions of the inputs (ADR 0027).",
+      "properties": {
+        "attributions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "machine_learning": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "notice": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sharing": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sharing",
+        "attributions",
+        "notice",
+        "machine_learning"
+      ],
+      "title": "Terms",
+      "type": "object"
+    },
+    "TestReport": {
+      "additionalProperties": false,
+      "description": "Report of :func:`auqua.analytics.experiment.evaluate_test`.",
+      "properties": {
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/Check"
+          },
+          "type": "array"
+        },
+        "evaluation": {
+          "type": "object"
+        },
+        "kind": {
+          "enum": [
+            "test evaluation"
+          ]
+        },
+        "lineage": {
+          "$ref": "#/$defs/Lineage"
+        },
+        "terms": {
+          "$ref": "#/$defs/Terms"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "title",
+        "terms",
+        "lineage",
+        "evaluation",
+        "checks"
+      ],
+      "title": "TestReport",
+      "type": "object"
+    }
+  },
+  "anyOf": [
+    {
+      "$ref": "#/$defs/ExperimentReport"
+    },
+    {
+      "$ref": "#/$defs/TestReport"
+    }
+  ],
+  "discriminator": {
+    "mapping": {
+      "experiment": "#/$defs/ExperimentReport",
+      "test evaluation": "#/$defs/TestReport"
+    },
+    "propertyName": "kind"
+  }
+}

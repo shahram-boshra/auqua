@@ -10,6 +10,7 @@ path = [
     ".secrets.baseline",
     "src/auqua/py.typed",
     "tests/snapshots/canonical_events.schema.json",
+    "tests/snapshots/research_report.schema.json",
     "tools/uv.lock",
     "uv.lock",
 ]

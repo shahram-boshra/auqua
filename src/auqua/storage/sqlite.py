@@ -16,9 +16,8 @@ from enum import StrEnum
 from pathlib import Path
 
 from auqua.storage.errors import StorageError
+from auqua.storage.files import PRIVATE_FILE, mkdir_private
 
-PRIVATE_DIRECTORY = 0o700
-PRIVATE_FILE = 0o600
 _SYNCHRONOUS_FULL = 2
 
 
@@ -34,8 +33,7 @@ def ensure_private_file(path: Path) -> None:
 
     An existing file is left unchanged.
     """
-    if not path.parent.exists():
-        path.parent.mkdir(mode=PRIVATE_DIRECTORY, parents=True)
+    mkdir_private(path.parent)
     try:
         descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, PRIVATE_FILE)
     except FileExistsError:

@@ -23,9 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from auqua.ingestion.errors import ChecksumError, FetchError, ParseError
+from auqua.storage.files import PRIVATE_FILE, mkdir_private
 
-PRIVATE_DIRECTORY = 0o700
-PRIVATE_FILE = 0o600
 _CHUNK = 1 << 20
 _SHA256_HEX = 64
 
@@ -38,24 +37,13 @@ class RawFile:
     size: int
 
 
-def _mkdir_private(path: Path) -> None:
-    """Create ``path`` and each missing parent with mode ``0700``.
-
-    ``Path.mkdir(parents=True)`` gives parents the default mode, so each
-    missing level is created on its own.
-    """
-    missing = [p for p in (path, *path.parents) if not p.exists()]
-    for directory in reversed(missing):
-        directory.mkdir(mode=PRIVATE_DIRECTORY, exist_ok=True)
-
-
 class RawStore:
     """Immutable raw objects addressed by SHA-256."""
 
     def __init__(self, root: Path) -> None:
         """Use (creating if needed, ``0700``) the store at ``root``."""
         self._root = root
-        _mkdir_private(root / "sha256")
+        mkdir_private(root / "sha256")
 
     def path(self, sha256: str) -> Path:
         """Location of the object ``sha256`` (whether or not it exists)."""
@@ -72,7 +60,7 @@ class RawStore:
         digest = hashlib.sha256()
         size = 0
         temporary = self._root / "tmp"
-        _mkdir_private(temporary)
+        mkdir_private(temporary)
         descriptor, name = tempfile.mkstemp(dir=temporary)
         try:
             with os.fdopen(descriptor, "wb") as handle:
@@ -87,7 +75,7 @@ class RawStore:
             Path(name).chmod(PRIVATE_FILE)
             raw = RawFile(digest.hexdigest(), size)
             target = self.path(raw.sha256)
-            _mkdir_private(target.parent)
+            mkdir_private(target.parent)
             if target.exists():
                 Path(name).unlink()
             else:

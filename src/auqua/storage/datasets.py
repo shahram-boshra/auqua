@@ -42,7 +42,9 @@ from auqua.storage.errors import (
     StorageError,
     UnsupportedStoreVersionError,
 )
+from auqua.storage.files import PRIVATE_FILE, mkdir_private, write_private
 from auqua.storage.replay import EventLogReader
+from auqua.storage.sqlite import ensure_private_file
 
 DECIMAL_TYPE = pa.decimal128(38, 18)
 MANIFEST = "manifest.json"
@@ -287,9 +289,11 @@ class DatasetWriter:
         version = self._manifest.version + 1
         relative = f"{partition_path(*key)}/part-{first:020d}-{last:020d}-v{version}.parquet"
         target = self.directory / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
+        mkdir_private(target.parent)
         temporary = target.with_name(f".{target.name}.tmp")
+        ensure_private_file(temporary)
         pq.write_table(table, temporary, row_group_size=self._config.rows_per_group)
+        temporary.chmod(PRIVATE_FILE)  # a leftover temporary file keeps its old mode
         temporary.replace(target)
         return FileEntry(relative, table.num_rows, first, last, _sha256_file(target))
 
@@ -368,11 +372,7 @@ class DatasetWriter:
             files=files,
             previous_files=previous,
         )
-        self.directory.mkdir(parents=True, exist_ok=True)
-        path = self.directory / MANIFEST
-        temporary = path.with_name(f".{MANIFEST}.tmp")
-        temporary.write_bytes(msgspec.json.format(msgspec.json.encode(manifest)))
-        temporary.replace(path)
+        write_private(self.directory / MANIFEST, msgspec.json.format(msgspec.json.encode(manifest)))
         self._manifest = manifest
         self._remove_unreferenced()
 

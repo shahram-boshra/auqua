@@ -82,6 +82,10 @@ class MarketView:
         """Build the view from every verified record of ``reader``."""
         return cls(reader.records())
 
+    def bar_series(self) -> list[tuple[InstrumentId, int]]:
+        """The (instrument, interval) pairs that have bars, sorted."""
+        return sorted(self._bars, key=lambda key: (str(key[0]), key[1]))
+
     def bars(self, instrument_id: InstrumentId, interval_ns: int, *, known_ns: int) -> list[Bar]:
         """Bars of one instrument and interval known at ``known_ns``, by availability time."""
         group = self._bars.get((instrument_id, interval_ns), {})

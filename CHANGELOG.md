@@ -61,8 +61,28 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   schema version 3 adds the `ingestion` section. No third-party data is
   included; tests use synthetic files in the providers' layouts.
 
+- Research and backtest (BP5): experiment specifications with train,
+  validation and test periods; point-in-time input snapshots with permitted,
+  cleared inputs; an event-driven engine; walk-forward and purged k-fold
+  validation; a trial ledger across runs; Deflated Sharpe Ratio, probabilistic
+  Sharpe ratio, PBO by CSCV and Lo-adjusted annualised Sharpe ratios (standard
+  library only); robustness sweeps with robust ranking; a cost model; the
+  Research Integrity Report as JSON (validated against a published schema)
+  and static HTML; reruns pinned to an earlier input; the
+  `python -m auqua.analytics` command line, which prints only the run id, the
+  input record count, the report hash and check statuses (ADRs 0030-0032).
+  Event types `research.run.v2` (upcast from v1) and `research.trial.v1`.
+
 ### Changed
 
+- The backtest runner reads bars through the point-in-time snapshot and the
+  log clock follows availability time; the simulated venue prices fills with
+  a cost model and supports latency, and decisions count orders still in
+  flight; source profiles name the event source of
+  their data, and first-party synthetic data has its own profile.
+- Every missing parent directory of an event log, dataset or report is
+  created `0700` (not only the last one), and dataset files, manifests and
+  reports are written `0600` (`auqua.storage.files`).
 - Data sources are cleared per jurisdiction: the configuration declares the
   operator's country of residence and access (`ingestion.jurisdiction`,
   schema version 4), each source profile records the jurisdictions assessed,

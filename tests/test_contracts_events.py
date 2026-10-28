@@ -44,6 +44,7 @@ from auqua.contracts.events.ingest import (
 )
 from auqua.contracts.events.lifecycle import CorporateActionKind
 from auqua.contracts.events.market import Aggressor
+from auqua.contracts.events.research import PeriodName, RunStartedV2, Trial
 from auqua.contracts.events.trading import (
     Fill,
     OrderSubmitted,
@@ -186,7 +187,49 @@ def _examples() -> list[Event]:
         InstrumentDefined(**_common(new_id()), instrument=_crypto_spot(knowledge_ns=T0)),
         *_trading_examples(),
         *_ingestion_examples(),
+        *_research_examples(),
     ]
+
+
+def _research_examples() -> list[Event]:
+    """One instance of each BP5 event type (beyond the run record)."""
+    return [
+        Trial(
+            **_common(new_id()),
+            hypothesis_id="ma-crossover-btc",
+            run_id=new_id(),
+            config_hash="0" * 64,
+            period=PeriodName.VALIDATION,
+            observations=100,
+            sharpe=Decimal("0.0123"),
+            returns_sha256="0" * 64,
+        ),
+    ]
+
+
+def test_run_started_v1_upcasts_to_v2() -> None:
+    """A walking-skeleton run record decodes as ``research.run.v2`` (BP5 K11)."""
+    digest = "0" * 64
+    legacy = RunStarted(
+        **_common(new_id()),
+        input_head_hash=digest,
+        input_next_sequence=0,
+        instrument_id=BTC,
+        instrument_sha256=digest,
+        config_id=digest,
+        spec_id=digest,
+        risk_limits_sha256=digest,
+        code_id=digest,
+        code_version="0.1.0",
+    )
+    decoded = CANONICAL.decode(encode(legacy))
+    assert isinstance(decoded, RunStartedV2)
+    assert (decoded.id, decoded.code_id, decoded.hypothesis_id, decoded.inputs) == (
+        legacy.id,
+        digest,
+        None,
+        (),
+    )
 
 
 def _ingestion_examples() -> list[Event]:
@@ -232,7 +275,7 @@ def _trading_examples() -> list[Event]:
     cause = new_id()
     digest = "0" * 64
     return [
-        RunStarted(
+        RunStartedV2(
             **_common(new_id()),
             input_head_hash=digest,
             input_next_sequence=0,

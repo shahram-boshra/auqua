@@ -70,12 +70,6 @@ BINANCE_INTERVALS = {
 }
 #: From this month Binance spot timestamps are microseconds (binance-public-data README).
 BINANCE_MICROSECONDS_FROM = datetime.date(2025, 1, 1)
-_SOURCES = {
-    COINBASE_CANDLES.name: "ingest/coinbase/exchange",
-    BINANCE_VISION_KLINES.name: "ingest/binance/vision",
-    FRB_H10.name: "ingest/frb/h10",
-    USTREASURY_PAR.name: "ingest/ustreasury/par-yield",
-}
 
 
 def _utc_s(text: str) -> int:
@@ -168,7 +162,7 @@ def _print_run(run: IngestRun) -> None:
 
 
 def _coinbase(session: _Session, args: argparse.Namespace) -> None:
-    source = _SOURCES[COINBASE_CANDLES.name]
+    source = COINBASE_CANDLES.event_source
     raw, retrieval = session.obtain(coinbase.product_url(args.product), COINBASE_CANDLES)
     product_bytes = session.store.read(raw.sha256)
     defined = coinbase.parse_product(product_bytes, ParseContext(source=source, ingest_ns=0))
@@ -242,7 +236,7 @@ def _binance(session: _Session, args: argparse.Namespace) -> None:
         raw,
         retrieval,
         ParseContext(
-            source=_SOURCES[BINANCE_VISION_KLINES.name],
+            source=BINANCE_VISION_KLINES.event_source,
             ingest_ns=0,
             instrument=instrument,
             interval_ns=BINANCE_INTERVALS[args.interval],
@@ -274,7 +268,7 @@ def _reference(session: _Session, args: argparse.Namespace) -> None:
         raw,
         retrieval,
         ParseContext(
-            source=_SOURCES[profile.name],
+            source=profile.event_source,
             ingest_ns=0,
             business_days=session.config.ingestion.treasury_available_after_business_days,
         ),
