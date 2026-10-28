@@ -3,8 +3,10 @@
 """Exact numeric values (ADR 0008, ADR 0016).
 
 Money, prices and quantities are :class:`decimal.Decimal` values. Every
-rounding goes through :func:`quantize` with an explicit :class:`Rounding`
-mode; binary floats enter only through :func:`from_float`.
+rounding goes through one path with an explicit :class:`Rounding` mode:
+:func:`quantize` for a value and :func:`divide` for a quotient, which is
+computed exactly and rounded once (BP6 D1). Binary floats enter only through
+:func:`from_float`.
 
 Rounding to an increment is computed on exact rationals, so increments that
 are not powers of ten (for example ``0.25`` or ``5``) round exactly.
@@ -142,7 +144,35 @@ def quantize(value: Decimal, increment: Decimal, rounding: Rounding) -> Decimal:
     """
     require_finite(value, "value")
     require_increment(increment)
-    ratio = Fraction(value) / Fraction(increment)
+    return _to_grid(Fraction(value), increment, rounding)
+
+
+def divide(
+    numerator: Decimal, denominator: Decimal, increment: Decimal, rounding: Rounding
+) -> Decimal:
+    """Round the exact quotient ``numerator / denominator`` once onto ``increment``.
+
+    The quotient is an exact rational, so nothing is rounded before the one
+    rounding under ``rounding``; the result carries the increment's scale, as
+    :func:`quantize` (BP6 D1, ADR 0008).
+
+    Raises:
+        InvalidDecimalError: an operand or ``increment`` is not finite, or
+            ``increment`` is not positive.
+        decimal.DivisionByZero: ``denominator`` is zero.
+        decimal.Inexact: the result needs more than :data:`PRECISION` digits.
+    """
+    require_finite(numerator, "numerator")
+    require_finite(denominator, "denominator")
+    require_increment(increment)
+    if denominator.is_zero():
+        raise decimal.DivisionByZero(f"{numerator} divided by zero")
+    return _to_grid(Fraction(numerator) / Fraction(denominator), increment, rounding)
+
+
+def _to_grid(value: Fraction, increment: Decimal, rounding: Rounding) -> Decimal:
+    """The one rounding: ``value`` to a multiple of ``increment`` under ``rounding``."""
+    ratio = value / Fraction(increment)
     units = _round_ratio(ratio.numerator, ratio.denominator, Rounding(rounding))
     with arithmetic() as ctx:
         ctx.traps[decimal.Inexact] = True

@@ -72,6 +72,8 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   `python -m auqua.analytics` command line, which prints only the run id, the
   input record count, the report hash and check statuses (ADRs 0030-0032).
   Event types `research.run.v2` (upcast from v1) and `research.trial.v1`.
+- Portfolio and capital (BP6, in progress): `numeric.divide` rounds an exact
+  quotient once, through the same rounding path as `numeric.quantize`.
 
 ### Changed
 

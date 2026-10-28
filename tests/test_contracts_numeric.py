@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Asadollah Boshra
 # SPDX-License-Identifier: MIT
-"""Tests for exact numeric values (BP1 X4, X5; ADR 0016)."""
+"""Tests for exact numeric values (BP1 X4, X5; ADR 0016; BP6 T20)."""
 
 import decimal
 from decimal import Decimal
@@ -15,6 +15,7 @@ from auqua.contracts.numeric import (
     Rounding,
     arithmetic,
     context,
+    divide,
     from_float,
     on_grid,
     quantize,
@@ -123,3 +124,51 @@ def test_precision_covers_three_sixteen_digit_operands() -> None:
         ctx.traps[decimal.Inexact] = True
         product = operand * operand * operand
     assert product == Decimal(9999999999999999**3)
+
+
+# --- BP6 T20: exact division, rounded once ----------------------------------------------------
+INCREMENTS = st.sampled_from(["1", "0.01", "0.00000001", "0.25", "5", "0.005"])
+NONZERO = FINITE.filter(lambda d: not d.is_zero())
+
+
+def _oracle(
+    numerator: Decimal, denominator: Decimal, increment: Decimal, mode: Rounding
+) -> Decimal:
+    """Long division to 200 digits with ROUND_05UP (safe for re-rounding), then one rounding."""
+    with decimal.localcontext(decimal.Context(prec=200, rounding=decimal.ROUND_05UP)):
+        units = numerator / (denominator * increment)
+    with decimal.localcontext(decimal.Context(prec=200)):
+        return units.quantize(Decimal(1), rounding=mode.value) * increment
+
+
+@given(numerator=FINITE, denominator=NONZERO, increment=INCREMENTS, mode=MODES)
+def test_divide_matches_an_oracle(
+    numerator: Decimal, denominator: Decimal, increment: str, mode: Rounding
+) -> None:
+    """The exact quotient is rounded once under every mode, sign and increment."""
+    step = Decimal(increment)
+    result = divide(numerator, denominator, step, mode)
+    assert result == _oracle(numerator, denominator, step, mode)
+    assert str(result) == str(quantize(result, step, mode)), "the scale of quantize"
+    assert not (result.is_zero() and result.is_signed())
+
+
+def test_divide_rounds_once_at_a_tie() -> None:
+    """1/8 to 0.01 is an exact tie: each half mode decides it, no earlier rounding moves it."""
+    eighth = (Decimal(1), Decimal(8), Decimal("0.01"))
+    assert str(divide(*eighth, Rounding.HALF_UP)) == "0.13"
+    assert str(divide(*eighth, Rounding.HALF_DOWN)) == "0.12"
+    assert str(divide(*eighth, Rounding.HALF_EVEN)) == "0.12"
+    assert str(divide(Decimal(1), Decimal(3), Decimal("0.00000001"), Rounding.HALF_EVEN)) == (
+        "0.33333333"
+    )
+
+
+def test_divide_refuses_zero_and_invalid_operands() -> None:
+    """A zero denominator raises DivisionByZero; non-finite operands are refused."""
+    with pytest.raises(decimal.DivisionByZero):
+        divide(Decimal(1), Decimal(0), Decimal("0.01"), Rounding.HALF_EVEN)
+    with pytest.raises(InvalidDecimalError):
+        divide(Decimal("NaN"), Decimal(1), Decimal("0.01"), Rounding.HALF_EVEN)
+    with pytest.raises(InvalidDecimalError):
+        divide(Decimal(1), Decimal(1), Decimal(0), Rounding.HALF_EVEN)
