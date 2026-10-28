@@ -1,17 +1,20 @@
 # SPDX-FileCopyrightText: 2026 Asadollah Boshra
 # SPDX-License-Identifier: MIT
-"""Backtest runner of the walking skeleton (thin); owned and extended by BP5 (ADR 0025).
+"""Single-configuration backtest (walking skeleton runner, rebuilt on BP5).
 
-One historical path: canonical bars in the input event log → baseline signal
-→ portfolio target → pre-trade risk gate → simulated venue fill → portfolio
-update → static report. The input log is read, never written. Every decision
-is a canonical event appended to the run's own log
-(``<runs_root>/<run_id>/event_log.sqlite3``), opened with :class:`EventLog`
-like any other log; the run log starts with :class:`RunStarted`, which names
-the input snapshot, configuration, specification, risk limits and code. Ids of
-derived events are name-based (run id, causing event, tag), and every
+One historical path: canonical bars from a point-in-time snapshot of the input
+log (:mod:`auqua.analytics.inputs`; ADR 0030) → baseline signal → portfolio
+target → pre-trade risk gate → simulated venue fill → portfolio update →
+static report, through :class:`auqua.analytics.engine.Simulation`. The input
+log is read, never written. Every decision is a canonical event appended to
+the run's own log (``<runs_root>/<run_id>/event_log.sqlite3``); the run log
+starts with :class:`RunStartedV2`, which names the input snapshot and its
+sources, the configuration, specification, risk limits, code and environment.
+Ids of derived events are name-based (run id, causing event, tag), and every
 timestamp comes from the log clock, so running the same inputs again produces
 byte-identical records (the second run's appends are counted duplicates).
+Experiments with several configurations, validation and the Research
+Integrity Report are :mod:`auqua.analytics.experiment`.
 """
 
 import hashlib
@@ -23,38 +26,24 @@ from pathlib import Path
 import msgspec
 from pydantic import Field
 
-from auqua.alpha.baseline import PROVIDER, PROVIDER_VERSION, MovingAverageCrossover
+from auqua.analytics.engine import SOURCE, Settings, Simulation
+from auqua.analytics.inputs import snapshot
 from auqua.analytics.lineage import code_id as current_code_id
-from auqua.analytics.lineage import code_version, run_id
-from auqua.clock.log import LogClock
+from auqua.analytics.lineage import code_version, environment, run_id
 from auqua.config.base import ConfigModel
 from auqua.config.identity import config_id as model_id
 from auqua.config.loader import LoadedConfig
 from auqua.contracts.events.base import Event
-from auqua.contracts.events.market import Bar
-from auqua.contracts.events.trading import (
-    Fill,
-    OrderSubmitted,
-    OrderType,
-    RiskDecision,
-    RunStarted,
-    Side,
-    Signal,
-    Target,
-)
-from auqua.contracts.identity import derived_id
+from auqua.contracts.events.research import RunStartedV2
+from auqua.contracts.events.trading import Fill, OrderSubmitted, RiskDecision
 from auqua.contracts.instruments import AnyInstrument
 from auqua.contracts.numeric import arithmetic, on_grid
-from auqua.execution.simulated import SimulatedVenue
+from auqua.execution.costs import FixedBps
 from auqua.portfolio.book import Book
-from auqua.risk.gate import PreTradeGate, TradingLimits
+from auqua.risk.gate import TradingLimits
 from auqua.storage.eventlog import EventLog
 from auqua.storage.replay import EventLogReader
 from auqua.visualization.report import ReportData, ReportRow
-
-SOURCE = "research/backtest"
-#: Namespace of ids of events derived by runs.
-_EVENT_NAMESPACE = derived_id(uuid.NAMESPACE_URL, b"https://github.com/shahram-boshra/auqua#event")
 
 
 class BacktestSpec(ConfigModel):
@@ -83,113 +72,13 @@ class BacktestResult:
 
     run_id: uuid.UUID
     run_log: Path
-    started: RunStarted
+    started: RunStartedV2
     events: list[Event]
     book: Book
     final_mark: Decimal
     equity: Decimal
     appended: int
     duplicates: int
-
-
-class _Run:
-    """State of one run while the input is replayed (long or flat; spot)."""
-
-    def __init__(
-        self, instrument: AnyInstrument, spec: BacktestSpec, limits: TradingLimits, rid: uuid.UUID
-    ) -> None:
-        self.instrument = instrument
-        self.spec = spec
-        self.rid = rid
-        self.clock = LogClock()
-        self.signal = MovingAverageCrossover(spec.fast_window, spec.slow_window)
-        self.gate = PreTradeGate(limits)
-        self.venue = SimulatedVenue(spec.fee_bps, spec.fee_increment)
-        self.book = Book(cash=spec.initial_cash)
-        self.direction: int | None = None
-        self.events: list[Event] = []
-        self.mark = Decimal(0)
-
-    def _id(self, cause: uuid.UUID, tag: str) -> uuid.UUID:
-        return derived_id(_EVENT_NAMESPACE, self.rid.bytes, cause.bytes, tag.encode())
-
-    def on_bar(self, bar: Bar) -> None:
-        """Fill pending orders at this bar's open, then decide on its close."""
-        self.clock.advance(bar.ts_ingest_ns)
-        now = self.clock.now_ns()
-        for execution in self.venue.on_bar(bar):
-            fill = Fill(
-                id=self._id(execution.order.id, "execution.fill.v1"),
-                source=SOURCE,
-                ts_event_ns=execution.ts_event_ns,
-                ts_ingest_ns=now,
-                causation_id=execution.order.id,
-                instrument_id=bar.instrument_id,
-                side=execution.side,
-                price=execution.price,
-                quantity=execution.quantity,
-                fee=execution.fee,
-                fee_currency=self.instrument.quote_currency,
-            )
-            self.book.apply(fill)
-            self.events.append(fill)
-        self.mark = bar.close
-        direction = self.signal.on_bar(bar)
-        if direction is None or direction == self.direction:
-            return
-        self.direction = direction
-        signal = Signal(
-            id=self._id(bar.id, "alpha.signal.v1"),
-            source=SOURCE,
-            ts_event_ns=now,
-            ts_ingest_ns=now,
-            causation_id=bar.id,
-            instrument_id=bar.instrument_id,
-            direction=direction,
-            provider=PROVIDER,
-            provider_version=PROVIDER_VERSION,
-        )
-        target = Target(
-            id=self._id(signal.id, "portfolio.target.v1"),
-            source=SOURCE,
-            ts_event_ns=now,
-            ts_ingest_ns=now,
-            causation_id=signal.id,
-            instrument_id=bar.instrument_id,
-            quantity=self.spec.quantity if direction > 0 else Decimal(0),
-        )
-        self.events += [signal, target]
-        with arithmetic():
-            delta = target.quantity - self.book.position
-        if not delta:
-            return
-        order = OrderSubmitted(
-            id=self._id(target.id, "order.submitted.v1"),
-            source=SOURCE,
-            ts_event_ns=now,
-            ts_ingest_ns=now,
-            causation_id=target.id,
-            instrument_id=bar.instrument_id,
-            side=Side.BUY if delta > 0 else Side.SELL,
-            quantity=abs(delta),
-            order_type=OrderType.MARKET,
-        )
-        check = self.gate.check(order.side, order.quantity, bar.close, self.book.position)
-        decision = RiskDecision(
-            id=self._id(order.id, "risk.decision.v1"),
-            source=SOURCE,
-            ts_event_ns=now,
-            ts_ingest_ns=now,
-            causation_id=order.id,
-            instrument_id=bar.instrument_id,
-            accepted=check.accepted,
-            rule=check.rule,
-            limit=check.limit,
-            value=check.value,
-        )
-        self.events += [order, decision]
-        if check.accepted:
-            self.venue.submit(order)
 
 
 def run_backtest(
@@ -207,19 +96,23 @@ def run_backtest(
     the run log goes to ``<output_root>/runs/<run_id>/`` of that configuration.
     ``code`` defaults to the identity of the imported package source.
 
-    The run reads the input up to its head at the start (one snapshot). Its
-    events are appended in one durable transaction at the end: a backtest has
-    no external effects, so a run that stops early is simply run again, and
-    a repeated run's identical records are counted as duplicates.
-    ``RunStarted`` carries time 0: the run starts before the first input
-    record has advanced its log clock.
+    The run reads the input up to its head at the start (one point-in-time
+    snapshot; its only bar series of ``instrument``). Its events are appended
+    in one durable transaction at the end: a backtest has no external
+    effects, so a run that stops early is simply run again, and a repeated
+    run's identical records are counted as duplicates. ``RunStartedV2``
+    carries time 0: the run starts before the first input record has
+    advanced its log clock.
 
     Raises:
         OffGridError: ``spec.quantity`` is not on the instrument's quantity grid.
+        InputError, NotEligibleError, PermitError: the input is not usable.
     """
     on_grid(spec.quantity, instrument.quantity_increment)
     code = code or current_code_id()
-    head = reader.head()
+    config = loaded.config
+    inputs = snapshot(reader, instrument.id, config.ingestion)
+    head = inputs.head
     spec_id = model_id(spec)
     instrument_sha256 = hashlib.sha256(msgspec.json.encode(instrument)).hexdigest()
     rid = run_id(
@@ -230,7 +123,8 @@ def run_backtest(
         loaded.risk_limits_sha256,
         code,
     )
-    started = RunStarted(
+    env = environment()
+    started = RunStartedV2(
         id=rid,
         source=SOURCE,
         ts_event_ns=0,
@@ -244,15 +138,20 @@ def run_backtest(
         risk_limits_sha256=loaded.risk_limits_sha256,
         code_id=code,
         code_version=code_version(),
+        interval_ns=inputs.interval_ns,
+        knowledge_ns=inputs.knowledge_ns,
+        inputs=inputs.inputs,
+        uv_lock_sha256=env.uv_lock_sha256,
+        python_version=env.python_version,
     )
-    run = _Run(instrument, spec, loaded.risk_limits.limits, rid)
-    for record in reader.records():
-        if record.sequence >= head.next_sequence:
-            break
-        event = record.event
-        if isinstance(event, Bar) and event.instrument_id == instrument.id:
-            run.on_bar(event)
-    config = loaded.config
+    settings = Settings(
+        quantity=spec.quantity,
+        initial_cash=spec.initial_cash,
+        costs=FixedBps(spec.fee_bps, Decimal(0), spec.fee_increment),
+        limits=loaded.risk_limits.limits,
+    )
+    run = Simulation(instrument, spec.fast_window, spec.slow_window, settings, rid)
+    run.run(inputs.bars)
     run_log = config.paths.output_root / "runs" / str(rid) / "event_log.sqlite3"
     timeout = config.storage.busy_timeout_ms
     with EventLog(run_log, config.environment, busy_timeout_ms=timeout) as log:

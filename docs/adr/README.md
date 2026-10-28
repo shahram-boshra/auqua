@@ -38,4 +38,7 @@ Format: Michael Nygard (title, status, context, decision, consequences). Numbers
 | [0027](0027-data-source-terms-and-permitted-use.md) | Data-source terms and permitted use | Accepted |
 | [0028](0028-availability-time.md) | Availability time | Accepted |
 | [0029](0029-data-source-eligibility-by-jurisdiction.md) | Data-source eligibility by jurisdiction | Accepted |
+| [0030](0030-experiments-and-point-in-time-inputs.md) | Experiments and point-in-time inputs | Accepted |
+| [0031](0031-validation-trial-ledger-and-overfitting-statistics.md) | Validation, trial ledger and overfitting statistics | Accepted |
+| [0032](0032-robustness-and-the-research-integrity-report.md) | Robustness and the Research Integrity Report | Accepted |
 | [0033](0033-uv-version-exact-in-ci-floor-in-project.md) | uv version: exact in CI, a floor in the project | Accepted |

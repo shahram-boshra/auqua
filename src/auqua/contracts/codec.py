@@ -17,6 +17,8 @@ import msgspec
 from auqua.contracts.errors import EventDecodeError
 from auqua.contracts.events import CanonicalEvent
 from auqua.contracts.events.base import Event, LogRecord
+from auqua.contracts.events.research import upcast_run_started
+from auqua.contracts.events.trading import RunStarted
 
 #: Upcaster: converts one legacy event version into the next version.
 Upcaster = Callable[[Any], Event]
@@ -99,5 +101,5 @@ class EventCodec:
         return msgspec.json.schema(_union(tuple(sorted(self._current, key=lambda t: t.__name__))))
 
 
-#: Codec for :data:`auqua.contracts.events.CanonicalEvent`.
-CANONICAL = EventCodec(CanonicalEvent.__args__)
+#: Codec for :data:`auqua.contracts.events.CanonicalEvent`; legacy versions are upcast.
+CANONICAL = EventCodec(CanonicalEvent.__args__, {RunStarted: upcast_run_started})

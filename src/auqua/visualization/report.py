@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from html import escape
 from pathlib import Path
 
+from auqua.storage.files import write_private
+
 
 @dataclass(frozen=True)
 class ReportRow:
@@ -69,7 +71,6 @@ def render(data: ReportData) -> str:
 
 
 def write_report(path: Path, data: ReportData) -> Path:
-    """Write the report to ``path`` (UTF-8) and return ``path``."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render(data), encoding="utf-8")
+    """Write the report to ``path`` (UTF-8, ``0600``) and return ``path``."""
+    write_private(path, render(data).encode())
     return path

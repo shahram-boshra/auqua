@@ -1090,6 +1090,56 @@
       "title": "IngestRun",
       "type": "object"
     },
+    "InputRef": {
+      "additionalProperties": false,
+      "description": "One input source of a run and its terms (ADRs 0027-0029).\n\n``runs_sha256`` hashes the sorted raw SHA-256s of the source's completed\ningestion runs in the snapshot; ``bars`` counts the bars used.",
+      "properties": {
+        "availability": {
+          "type": "string"
+        },
+        "bars": {
+          "type": "integer"
+        },
+        "event_source": {
+          "type": "string"
+        },
+        "gaps": {
+          "type": "integer"
+        },
+        "jurisdiction": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "runs": {
+          "type": "integer"
+        },
+        "runs_sha256": {
+          "type": "string"
+        },
+        "terms": {
+          "type": "string"
+        },
+        "use_class": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_source",
+        "profile",
+        "terms",
+        "use_class",
+        "jurisdiction",
+        "availability",
+        "runs",
+        "runs_sha256",
+        "bars",
+        "gaps"
+      ],
+      "title": "InputRef",
+      "type": "object"
+    },
     "InstrumentDefined": {
       "additionalProperties": false,
       "description": "One version of an instrument specification.\n\n``instrument.valid_from_ns`` is when the version takes effect and\n``instrument.knowledge_ns`` when it became available (historical\navailability, Strategy section 5). A later correction is a new event with a\nlater ``knowledge_ns``; a version is never edited.",
@@ -1451,6 +1501,37 @@
       ],
       "title": "OrderType"
     },
+    "Period": {
+      "additionalProperties": false,
+      "description": "A half-open UTC interval ``[start_ns, end_ns)`` with its role.",
+      "properties": {
+        "end_ns": {
+          "type": "integer"
+        },
+        "name": {
+          "$ref": "#/$defs/PeriodName"
+        },
+        "start_ns": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "start_ns",
+        "end_ns"
+      ],
+      "title": "Period",
+      "type": "object"
+    },
+    "PeriodName": {
+      "description": "Role of a period in the experiment (BP5 section 4.1).",
+      "enum": [
+        "test",
+        "train",
+        "validation"
+      ],
+      "title": "PeriodName"
+    },
     "PerpetualSwap": {
       "additionalProperties": false,
       "description": "Crypto perpetual swap; ``contract_type`` selects linear or inverse arithmetic (BP6).",
@@ -1720,9 +1801,9 @@
       ],
       "title": "RunOutcome"
     },
-    "RunStarted": {
+    "RunStartedV2": {
       "additionalProperties": false,
-      "description": "Identity of one run: what it read, how it was configured, which code ran.\n\nThe event ``id`` is the run id. Hashes are lower-case hex SHA-256;\n``instrument_sha256`` hashes the JSON encoding of the instrument version\nthe run traded.",
+      "description": "Experiment record: the identity of one research or backtest run.\n\nThe event ``id`` is the run id. ``knowledge_ns`` is the snapshot's\nknowledge time (the latest ingestion time in the input log).",
       "properties": {
         "code_id": {
           "type": "string"
@@ -1732,6 +1813,17 @@
         },
         "config_id": {
           "type": "string"
+        },
+        "hypothesis_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "id": {
           "format": "uuid",
@@ -1743,20 +1835,89 @@
         "input_next_sequence": {
           "type": "integer"
         },
+        "inputs": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/InputRef"
+          },
+          "type": "array"
+        },
         "instrument_id": {
           "$ref": "#/$defs/InstrumentId"
         },
         "instrument_sha256": {
           "type": "string"
         },
+        "interval_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "knowledge_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "periods": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Period"
+          },
+          "type": "array"
+        },
+        "python_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "risk_limits_sha256": {
           "type": "string"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "source": {
           "type": "string"
         },
         "spec_id": {
           "type": "string"
+        },
+        "spec_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "ts_event_ns": {
           "type": "integer"
@@ -1766,8 +1927,19 @@
         },
         "type": {
           "enum": [
-            "research.run.v1"
+            "research.run.v2"
           ]
+        },
+        "uv_lock_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -1786,7 +1958,7 @@
         "code_id",
         "code_version"
       ],
-      "title": "RunStarted",
+      "title": "RunStartedV2",
       "type": "object"
     },
     "SeriesId": {
@@ -1993,6 +2165,69 @@
       "title": "Trade",
       "type": "object"
     },
+    "Trial": {
+      "additionalProperties": false,
+      "description": "One configuration evaluated on one period of one hypothesis.\n\n``config_hash`` identifies the configuration (signal parameters and cost\nmodel); ``returns_sha256`` the per-period return series as text; ``sharpe``\nis the per-period (not annualised) Sharpe ratio.",
+      "properties": {
+        "config_hash": {
+          "type": "string"
+        },
+        "hypothesis_id": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "observations": {
+          "type": "integer"
+        },
+        "period": {
+          "$ref": "#/$defs/PeriodName"
+        },
+        "returns_sha256": {
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "sharpe": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "research.trial.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "hypothesis_id",
+        "run_id",
+        "config_hash",
+        "period",
+        "observations",
+        "sharpe",
+        "returns_sha256"
+      ],
+      "title": "Trial",
+      "type": "object"
+    },
     "UseClass": {
       "description": "Use the operator declares for data from a source (decision log a25, a28).\n\n``unrestricted`` is for data whose terms impose no use restriction (for\nexample works of the US Government, 17 U.S.C. 105).",
       "enum": [
@@ -2057,7 +2292,7 @@
       "$ref": "#/$defs/RiskDecision"
     },
     {
-      "$ref": "#/$defs/RunStarted"
+      "$ref": "#/$defs/RunStartedV2"
     },
     {
       "$ref": "#/$defs/Signal"
@@ -2067,6 +2302,9 @@
     },
     {
       "$ref": "#/$defs/Trade"
+    },
+    {
+      "$ref": "#/$defs/Trial"
     }
   ],
   "discriminator": {
@@ -2090,7 +2328,8 @@
       "order.submitted.v1": "#/$defs/OrderSubmitted",
       "portfolio.target.v1": "#/$defs/Target",
       "reference.instrument.v1": "#/$defs/InstrumentDefined",
-      "research.run.v1": "#/$defs/RunStarted",
+      "research.run.v2": "#/$defs/RunStartedV2",
+      "research.trial.v1": "#/$defs/Trial",
       "risk.decision.v1": "#/$defs/RiskDecision"
     },
     "propertyName": "type"

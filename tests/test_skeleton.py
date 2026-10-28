@@ -30,18 +30,19 @@ from auqua.config.base import Environment
 from auqua.config.loader import LoadedConfig, load
 from auqua.contracts.events.base import Event
 from auqua.contracts.events.market import Bar
+from auqua.contracts.events.research import RunStartedV2
 from auqua.contracts.events.trading import (
     Fill,
     OrderSubmitted,
     OrderType,
     RiskDecision,
-    RunStarted,
     Side,
     Signal,
     Target,
 )
 from auqua.contracts.identity import InstrumentId, derived_id
 from auqua.contracts.instruments import CryptoSpot, Identifiers
+from auqua.execution.costs import FixedBps
 from auqua.execution.simulated import SimulatedVenue
 from auqua.ingestion.parsers.binance_vision_klines import KlineFormatError, TimeUnit, read_klines
 from auqua.portfolio.book import Book
@@ -267,7 +268,7 @@ def test_every_order_traces_to_signal_data_configuration_and_code(setup: Setup) 
         assert isinstance(by_id[fill.causation_id], OrderSubmitted)
     with EventLogReader(result.run_log, ENV, busy_timeout_ms=TIMEOUT_MS) as reader:
         started = next(reader.records()).event
-    assert isinstance(started, RunStarted)
+    assert isinstance(started, RunStartedV2)
     assert started.id == result.run_id
     assert started.input_head_hash == head.hash.hex()
     assert started.config_id == setup.loaded.config_id
@@ -423,7 +424,7 @@ def _order(side: Side, quantity: str) -> OrderSubmitted:
 
 def test_venue_fills_at_next_open_with_rounded_fee() -> None:
     """An order fills at the open of the next bar, never at a known price."""
-    venue = SimulatedVenue(Decimal(10), Decimal("0.01"))
+    venue = SimulatedVenue(FixedBps(Decimal(10), Decimal(0), Decimal("0.01")), Decimal("0.01"))
     venue.submit(_order(Side.BUY, "0.5"))
     (execution,) = venue.on_bar(_bar(1, "101.00", open_="100.37"))
     assert (execution.price, execution.ts_event_ns) == (Decimal("100.37"), MINUTE_NS)

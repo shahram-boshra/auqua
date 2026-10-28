@@ -11,7 +11,9 @@ name-based UUIDv8 over everything that determines the run's output.
 
 import hashlib
 import importlib.metadata
+import platform
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 import auqua
@@ -32,6 +34,26 @@ def code_id(package_dir: Path | None = None) -> str:
         digest.update(relative.encode() + b"\0")
         digest.update(hashlib.sha256(path.read_bytes()).digest())
     return digest.hexdigest()
+
+
+@dataclass(frozen=True)
+class Environment:
+    """Interpreter version and the lock file's SHA-256 (``None`` outside a project checkout)."""
+
+    python_version: str
+    uv_lock_sha256: str | None
+
+
+def environment(package_dir: Path | None = None) -> Environment:
+    """The run environment (Strategy Module 3: "dependency/environment information").
+
+    ``uv.lock`` is looked up in the source checkout that contains the package
+    (``<root>/src/auqua``); a wheel installation has none.
+    """
+    root = (package_dir or Path(auqua.__file__).parent).resolve()
+    lock = root.parent.parent / "uv.lock"
+    digest = hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None
+    return Environment(platform.python_version(), digest)
 
 
 def code_version() -> str:
