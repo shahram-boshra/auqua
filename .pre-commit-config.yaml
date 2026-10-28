@@ -39,8 +39,13 @@ repos:
         name: detect-secrets
         entry: uv run --locked detect-secrets-hook --baseline .secrets.baseline
         language: system
-        # Lock files hold package hashes; this file holds public commit SHAs.
-        exclude: ^(uv\.lock|tools/uv\.lock|\.pre-commit-config\.yaml)$
+        # Lock files hold package hashes; this file holds public commit SHAs; the
+        # economic baseline holds SHA-256 digests of synthetic test series.
+        exclude: |
+          (?x)^(
+            uv\.lock|tools/uv\.lock|\.pre-commit-config\.yaml|
+            tests/snapshots/bp5_economic_outputs\.json
+          )$
       - id: reuse-lint
         name: REUSE lint
         entry: uv run --locked reuse lint
