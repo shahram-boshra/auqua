@@ -17,7 +17,7 @@ ADR 0010 pinned uv with `required-version = "==0.13.1"`, so any other uv refuses
 
 ## Decision
 
-The exact uv for CI is set once per workflow (`env.UV_VERSION`, passed to `setup-uv` as `version`), and the workstation uses the same version. `required-version` in `pyproject.toml` and `tools/pyproject.toml` is a floor (`>=0.13.5`): it refuses older uv versions and accepts the one Dependabot runs. The floor is raised only to a version that a Dependabot run has reported (`Package manager uv, Info : uv <version>`), so it never excludes Dependabot. Dependency upgrades, by Dependabot or by hand, take releases that are at least 7 days old (Dependabot `cooldown`).
+The exact uv for CI is set once per workflow (`env.UV_VERSION`, passed to `setup-uv` as `version`), and the workstation uses the same version. `required-version` in `pyproject.toml` and `tools/pyproject.toml` is a floor (`>=0.13.5`): it refuses older uv versions and accepts the one Dependabot runs. The floor is raised only to a version that a Dependabot run has reported (`Package manager uv, Info : uv <version>`), so it never excludes Dependabot. Version upgrades, by Dependabot or by hand, take releases that are at least 7 days old (Dependabot `cooldown`). A security fix is exempt, as Dependabot security updates are: it takes the lowest release that fixes every reported advisory, whatever its age.
 
 ## Consequences
 

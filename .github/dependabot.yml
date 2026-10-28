@@ -3,8 +3,8 @@
 
 version: 2
 # cooldown: a release is proposed only once it is 7 days old (GitHub Docs,
-# Dependabot options reference); manual upgrades use the same minimum age
-# (ADR 0033).
+# Dependabot options reference); manual version upgrades use the same minimum
+# age, security fixes are exempt (ADR 0033).
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
