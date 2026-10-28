@@ -18,7 +18,7 @@ Format: Michael Nygard (title, status, context, decision, consequences). Numbers
 | [0007](0007-provenance-controls.md) | Code provenance controls from the first commit | Superseded by [0013](0013-provenance-matching-at-push.md) |
 | [0008](0008-exact-numeric-values.md) | Exact numeric values for money, prices and quantities | Accepted |
 | [0009](0009-event-log-clock.md) | Time from the sequenced event log | Accepted |
-| [0010](0010-python-and-uv-versions.md) | Python 3.14 and uv 0.13.1 | Accepted |
+| [0010](0010-python-and-uv-versions.md) | Python 3.14 and uv 0.13.1 | Accepted; uv part superseded by [0033](0033-uv-version-exact-in-ci-floor-in-project.md) |
 | [0011](0011-single-package-src-layout.md) | One distribution and import package in the src layout | Accepted |
 | [0012](0012-gate-toolchain-and-licence-policy.md) | Gate toolchain and licence policy | Accepted |
 | [0013](0013-provenance-matching-at-push.md) | Provenance matching at commit and push; ScanCode in CI | Accepted |
@@ -38,3 +38,4 @@ Format: Michael Nygard (title, status, context, decision, consequences). Numbers
 | [0027](0027-data-source-terms-and-permitted-use.md) | Data-source terms and permitted use | Accepted |
 | [0028](0028-availability-time.md) | Availability time | Accepted |
 | [0029](0029-data-source-eligibility-by-jurisdiction.md) | Data-source eligibility by jurisdiction | Accepted |
+| [0033](0033-uv-version-exact-in-ci-floor-in-project.md) | uv version: exact in CI, a floor in the project | Accepted |

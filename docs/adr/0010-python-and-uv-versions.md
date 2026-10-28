@@ -9,7 +9,7 @@ Date: 2026-10-16
 
 ## Status
 
-Accepted
+Accepted; the uv part is superseded by [0033](0033-uv-version-exact-in-ci-floor-in-project.md)
 
 ## Context
 

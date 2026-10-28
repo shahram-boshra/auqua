@@ -22,8 +22,8 @@ structure marks the planned components only.
 
 ## Development
 
-Requirements: Linux, [uv](https://docs.astral.sh/uv/) 0.13.1 (enforced by
-`required-version`), Git. uv installs Python 3.14.
+Requirements: Linux, [uv](https://docs.astral.sh/uv/) 0.13.5 (CI installs exactly
+this version; `required-version` refuses older ones), Git. uv installs Python 3.14.
 
 ```bash
 uv sync --locked                                  # project environment

@@ -5,6 +5,8 @@ name: Release
 on:
   push:
     tags: ["v*.*.*"]
+env:
+  UV_VERSION: "0.13.5"  # exact uv for CI; pyproject.toml holds only a floor (ADR 0033)
 permissions:
   contents: read
 jobs:
@@ -22,6 +24,7 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
         with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: false
       - run: uv sync --locked
       - run: uv run --locked pytest -q

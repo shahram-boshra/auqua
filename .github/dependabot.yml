@@ -2,16 +2,25 @@
 # SPDX-License-Identifier: MIT
 
 version: 2
+# cooldown: a release is proposed only once it is 7 days old (GitHub Docs,
+# Dependabot options reference); manual upgrades use the same minimum age
+# (ADR 0033).
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
   - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
   - package-ecosystem: "uv"
     directory: "/tools"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
