@@ -11,6 +11,7 @@ path = [
     "src/auqua/py.typed",
     "tests/snapshots/canonical_events.schema.json",
     "tests/snapshots/research_report.schema.json",
+    "tools/.python-version",
     "tools/uv.lock",
     "uv.lock",
 ]
