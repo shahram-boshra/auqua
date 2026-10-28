@@ -36,7 +36,7 @@ from auqua.contracts.events.base import Event
 from auqua.contracts.events.market import Bar
 from auqua.contracts.events.reference import InstrumentDefined
 from auqua.contracts.events.research import RunStartedV2, Trial
-from auqua.contracts.events.trading import OrderSubmitted, OrderType, Side, Signal
+from auqua.contracts.events.trading import Fill, OrderSubmitted, OrderType, Side, Signal
 from auqua.contracts.identity import InstrumentId, derived_id
 from auqua.contracts.instruments import CryptoSpot, Identifiers
 from auqua.execution.costs import FixedBps
@@ -606,3 +606,70 @@ def test_command_line_prints_statuses_and_hashes_only(
     path.write_text(wrong, encoding="utf-8")
     assert cli.main(argv) == 1
     assert "no instrument definition" in capsys.readouterr().err
+
+
+# --- BP6 T15: economic outputs, characterised before the portfolio change (PC-10, S0) -----------
+ECONOMIC_BASELINE = Path(__file__).parent / "snapshots" / "bp5_economic_outputs.json"
+#: Fixed run id for the per-configuration simulations: ids do not enter the economic outputs.
+BASELINE_RUN = uuid.UUID(int=0)
+
+
+def _equity_digest(equity: list[tuple[int, Decimal]]) -> dict[str, Any]:
+    text = "\n".join(f"{t} {value}" for t, value in equity)
+    return {
+        "points": len(equity),
+        "last": str(equity[-1][1]),
+        "sha256": hashlib.sha256(text.encode()).hexdigest(),
+    }
+
+
+def economic_outputs(lab: Lab) -> dict[str, Any]:
+    """Fills, equity series and trial statistics of the BP5 synthetic experiment.
+
+    Run ids and report bytes are excluded: they include ``code_id``, which
+    changes with every code change (BP6 PC-10). Per-period Sharpe ratios are
+    compared as the exact text of their binary values.
+    """
+    experiment = spec()
+    bars = [b for b in synthetic_bars(3 * 1_440, seed=11) if available_ns(b) < T0 + 2 * DAY]
+    costs = FixedBps(experiment.fee_bps, experiment.slippage_bps, experiment.fee_increment)
+    settings = Settings(
+        experiment.quantity, experiment.initial_cash, costs, lab.loaded.risk_limits.limits
+    )
+    simulations: dict[str, Any] = {}
+    for fast, slow in experiment.signal.configurations():
+        simulation = Simulation(SYNTH, fast, slow, settings, BASELINE_RUN).run(bars)
+        fills = [e for e in simulation.events if isinstance(e, Fill)]
+        simulations[f"{fast}/{slow}"] = {
+            "fills": [
+                [f.side.value, str(f.quantity), str(f.price), str(f.fee), f.fee_currency]
+                for f in fills
+            ],
+            "equity": _equity_digest(simulation.equity),
+        }
+    with lab.reader() as reader:
+        result = run_experiment(reader, SYNTH, experiment, lab.loaded)
+    with EventLogReader(result.run_log, ENV, busy_timeout_ms=TIMEOUT_MS) as run:
+        trials = [r.event for r in run.records() if isinstance(r.event, Trial)]
+    return {
+        "simulations": simulations,
+        "trials": sorted(
+            [t.config_hash, t.period.value, t.observations, str(t.sharpe), t.returns_sha256]
+            for t in trials
+        ),
+        "ranking": [
+            {
+                "configuration": c["configuration"],
+                "validation_sharpe": repr(c["validation_sharpe"]),
+                "sweeps": {name: repr(value) for name, value in sorted(c["sweeps"].items())},
+            }
+            for c in result.report["ranking"]
+        ],
+    }
+
+
+def test_economic_outputs_match_the_baseline(tmp_path: Path) -> None:
+    """BP6 T15: fills, equity series and trial statistics equal the pre-BP6 baseline."""
+    lab = make_lab(tmp_path, synthetic_bars(3 * 1_440, seed=11))
+    expected = json.loads(ECONOMIC_BASELINE.read_text(encoding="utf-8"))
+    assert economic_outputs(lab) == expected
