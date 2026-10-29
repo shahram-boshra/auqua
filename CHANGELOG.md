@@ -101,7 +101,16 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   bytes (`omit_defaults`): `exercise_settlement_value` on option exercise and
   assignment, `accrued_interest` on fills; day count `act_act_treasury`
   (semiannual coupons only); posting kind `accrued`; event
-  `portfolio.allocation_unavailable.v1` with closed reasons.
+  `portfolio.allocation_unavailable.v1` with closed reasons. Per-class
+  effects: futures daily variation from the day's trades and the start-of-day
+  position, each contract's value rounded to the settlement currency (ties
+  away from zero, CME), physical delivery refused; spot pairs post base and
+  quote on the trade date and the fee in its own currency (long or flat, FX
+  forwards refused); inverse-perpetual profit in the coin, rounded once;
+  funding posted as reported, or computed only for a position sized in the
+  settlement currency. Margin requirements per contract or as a fraction of
+  notional from the configured values, exact; a position without a usable
+  requirement is reported as unmargined, never as zero.
 
 ### Changed
 
