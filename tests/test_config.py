@@ -1,12 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Asadollah Boshra
 # SPDX-License-Identifier: MIT
-"""Tests for the configuration loader (BP2 Y1-Y11; ADRs 0018-0020).
+"""Tests for the configuration loader (BP2 Y1-Y11; ADRs 0018-0020; BP6 section 4.11, T16).
 
 Every fixture is created in a temporary directory: secrets need mode 0600,
 which Git does not store, and no deployable configuration lives in the
 repository.
 """
 
+import datetime
 import hashlib
 import json
 import os
@@ -33,6 +34,7 @@ from auqua.config.errors import (
 from auqua.config.identity import config_id
 from auqua.config.loader import LoadedConfig, load
 from auqua.config.migrate import Migrations
+from auqua.config.portfolio import MarginBasis, PortfolioConfig
 from auqua.config.root import CONFIG_MIGRATIONS
 from auqua.config.secret_files import SecretsDirectory
 from auqua.config.storage import StorageConfig
@@ -325,3 +327,161 @@ def test_secrets_owned_by_the_running_user(roots: Roots) -> None:
     """The ownership rule compares with the effective user id."""
     info = (roots.secrets / "paper" / "BROKER_API_KEY").stat()
     assert info.st_uid == os.geteuid()
+
+
+# --- BP6 section 4.11: the portfolio section (schema 5) -----------------------------------------
+PORTFOLIO = """
+[portfolio]
+account_id = "paper-1"
+
+[portfolio.currencies.USD]
+kind = "fiat"
+minor_units = 2
+source = "ISO 4217 amendment list"
+read_on = 2026-10-28
+
+[portfolio.currencies.EUR]
+kind = "fiat"
+minor_units = 2
+source = "ISO 4217 amendment list"
+read_on = 2026-10-28
+
+[portfolio.currencies.BTC]
+kind = "crypto"
+minor_units = 8
+source = "venue asset specification"
+read_on = 2026-10-28
+
+[portfolio.rates.EUR]
+series = "FRB:H10/RXI$US_N.B.EU"
+
+[portfolio.rates.BTC]
+instrument = "COINBASE:BTC-USD"
+
+[portfolio.margin."DERIBIT:BTC-PERPETUAL"]
+basis = "notional_fraction"
+initial = 0.02
+maintenance = 0.01
+currency = "BTC"
+source = "venue margin page"
+read_on = 2026-10-28
+
+[portfolio.funding."DERIBIT:BTC-PERPETUAL"]
+rate_period_ns = 28800000000000
+source = "Deribit, Inverse Perpetual"
+read_on = 2026-10-28
+"""
+
+
+def test_config_version_4_migrates_to_an_empty_portfolio(roots: Roots) -> None:
+    """Version 4 has no ``portfolio`` section; it migrates with empty defaults (BP6 4.11)."""
+    _write(roots.config / "paper" / "config.toml", CONFIG.format(env="paper").replace("= 1", "= 4"))
+    portfolio = _load(roots).config.portfolio
+    assert portfolio == PortfolioConfig()
+    assert (portfolio.base_currency, portfolio.account_id) == ("USD", "primary")
+    sections = (portfolio.currencies, portfolio.rates, portfolio.margin, portfolio.funding)
+    assert [len(section) for section in sections] == [0, 0, 0, 0]
+
+
+def test_portfolio_section_loads_exactly(roots: Roots) -> None:
+    """Currencies, rates, margin and funding load with exact decimals and dates (BP6 4.11)."""
+    text = CONFIG.format(env="paper").replace("= 1", "= 5") + PORTFOLIO
+    _write(roots.config / "paper" / "config.toml", text)
+    portfolio = _load(roots).config.portfolio
+    assert portfolio.account_id == "paper-1"
+    assert portfolio.currencies["BTC"].currency("BTC").minor_units == 8  # noqa: PLR2004
+    assert portfolio.rates["EUR"].series == "FRB:H10/RXI$US_N.B.EU"
+    margin = portfolio.margin["DERIBIT:BTC-PERPETUAL"]
+    assert (margin.basis, margin.initial, margin.maintenance) == (
+        MarginBasis.NOTIONAL_FRACTION,
+        Decimal("0.02"),
+        Decimal("0.01"),
+    )
+    assert margin.read_on == datetime.date(2026, 10, 28)
+    assert portfolio.funding["DERIBIT:BTC-PERPETUAL"].rate_period_ns == 8 * 3_600 * 10**9
+
+
+def _portfolio(**changes: Any) -> dict[str, Any]:  # noqa: ANN401 - test overrides
+    entry = {"source": "s", "read_on": datetime.date(2026, 10, 28)}
+    document: dict[str, Any] = {
+        "currencies": {
+            "USD": {"kind": "fiat", "minor_units": 2, **entry},
+            "EUR": {"kind": "fiat", "minor_units": 2, **entry},
+        },
+        "rates": {"EUR": {"series": "FRB:H10/RXI$US_N.B.EU"}},
+        "margin": {
+            "XCME:ES-202612": {
+                "basis": "per_contract",
+                "initial": Decimal(20000),
+                "maintenance": Decimal(18000),
+                "currency": "USD",
+                **entry,
+            }
+        },
+    }
+    for key, value in changes.items():
+        document[key] = value
+    return document
+
+
+@pytest.mark.parametrize(
+    ("changes", "match"),
+    [
+        ({"rates": {"USD": {"series": "FRB:H10/X"}}}, "base currency"),
+        ({"rates": {"JPY": {"series": "FRB:H10/RXI_N.B.JA"}}}, "not among the currencies"),
+        (
+            {"rates": {"EUR": {"series": "FRB:H10/X", "instrument": "COINBASE:EUR-USD"}}},
+            "exactly one",
+        ),
+        ({"rates": {"EUR": {}}}, "exactly one"),
+        ({"rates": {"EUR": {"series": "no-separator"}}}, "series id"),
+        ({"margin": {"bad key": {}}}, "Field required|instrument id"),
+        (
+            {
+                "currencies": {
+                    "USDT": {
+                        "kind": "fiat",
+                        "minor_units": 2,
+                        "source": "s",
+                        "read_on": datetime.date(2026, 1, 1),
+                    }
+                }
+            },
+            "currency code",
+        ),
+        (
+            {
+                "currencies": {
+                    "USD": {
+                        "kind": "fiat",
+                        "minor_units": 2,
+                        "source": " s",
+                        "read_on": datetime.date(2026, 1, 1),
+                    }
+                }
+            },
+            "pattern",
+        ),
+    ],
+)
+def test_portfolio_section_refusals(changes: dict[str, Any], match: str) -> None:
+    """References must resolve; each rate has exactly one source; codes fit their kind."""
+    with pytest.raises(ValidationError, match=match):
+        PortfolioConfig.model_validate(_portfolio(**changes), strict=False)
+
+
+def test_margin_entry_refusals() -> None:
+    """Maintenance <= initial; a notional fraction is at most 1; its currency is declared."""
+    base = _portfolio()["margin"]["XCME:ES-202612"]
+    for changes, match in (
+        ({"maintenance": Decimal(30000)}, "exceed"),
+        (
+            {"basis": "notional_fraction", "initial": Decimal(2), "maintenance": Decimal(1)},
+            "at most 1",
+        ),
+        ({"currency": "JPY"}, "not among the currencies"),
+    ):
+        document = _portfolio(margin={"XCME:ES-202612": base | changes})
+        with pytest.raises(ValidationError, match=match):
+            PortfolioConfig.model_validate(document, strict=False)
+    assert PortfolioConfig.model_validate(_portfolio(), strict=False).margin

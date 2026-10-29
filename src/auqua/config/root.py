@@ -14,13 +14,14 @@ from pydantic import Field, field_validator
 from auqua.config.base import ConfigModel, Environment, Overridable
 from auqua.config.ingestion import IngestionConfig
 from auqua.config.migrate import Document, Migrations
+from auqua.config.portfolio import PortfolioConfig
 from auqua.config.storage import StorageConfig
 
 #: Enumerations and paths arrive as TOML strings; their fields accept strings.
 EnvironmentField = Annotated[Environment, Field(strict=False)]
 OverridablePath = Annotated[Path, Overridable(), Field(strict=False)]
 
-CONFIG_MIGRATIONS = Migrations("config", current=4)
+CONFIG_MIGRATIONS = Migrations("config", current=5)
 RISK_LIMITS_MIGRATIONS = Migrations("risk_limits", current=1)
 
 
@@ -39,9 +40,15 @@ def _config_v3_to_v4(document: Document) -> Document:
     return {**document, "schema_version": 4}
 
 
+def _config_v4_to_v5(document: Document) -> Document:
+    """Version 5 adds the ``portfolio`` section (BP6); a version-4 file takes its defaults."""
+    return {**document, "schema_version": 5}
+
+
 CONFIG_MIGRATIONS.register(1, _config_v1_to_v2)
 CONFIG_MIGRATIONS.register(2, _config_v2_to_v3)
 CONFIG_MIGRATIONS.register(3, _config_v3_to_v4)
+CONFIG_MIGRATIONS.register(4, _config_v4_to_v5)
 
 
 class PathsConfig(ConfigModel):
@@ -61,11 +68,12 @@ class PathsConfig(ConfigModel):
 class AuquaConfig(ConfigModel):
     """Root configuration of one environment (``config.toml``)."""
 
-    schema_version: Literal[4]
+    schema_version: Literal[5]
     environment: EnvironmentField
     paths: PathsConfig
     storage: StorageConfig = StorageConfig()
     ingestion: IngestionConfig = IngestionConfig()
+    portfolio: PortfolioConfig = PortfolioConfig()
 
 
 class RiskLimitsFile[L: ConfigModel](ConfigModel):
