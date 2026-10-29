@@ -150,6 +150,14 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   the base balance; the account view lists unmarked positions apart from
   unconverted currencies; margin covers futures and perpetual swaps, a written
   option is reported unmargined.
+  The portfolio projection in the transactional store (BP6 amendment 8):
+  every piece of the fold's state in typed STRICT tables, decimals as their
+  exact text, postings with balances that must equal their sums, stamped with
+  the log position, the configuration and a content SHA-256; a projection
+  that is corrupted, inconsistent, of another schema or configuration, off
+  the log's chain or ahead of it is rebuilt from 0, otherwise the fold
+  continues from its position with the instrument index of the records before
+  it. The event-log reader yields records with their verified chain hashes.
 
 ### Changed
 

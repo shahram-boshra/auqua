@@ -151,6 +151,16 @@ def test_fx_settlement_break_repeat_is_a_duplicate_and_change_a_conflict(log: Ev
         log.append([changed])
 
 
+def test_records_with_hashes_carry_the_verified_chain(log: EventLog, log_path: Path) -> None:
+    """Each record comes with its stored chain hash; resuming verifies from the one before."""
+    log.append([trade(i) for i in range(4)])
+    with _reader(log_path) as reader:
+        pairs = list(reader.records_with_hashes())
+        assert [h for _, h in pairs] == [reader.hash_at(i) for i in range(4)]
+        assert [r for r, _ in pairs] == list(reader.records())
+        assert list(reader.records_with_hashes(2)) == pairs[2:]
+
+
 def test_duplicates_counted_and_conflicts_roll_back(log: EventLog, log_path: Path) -> None:
     """Identical copies are counted; a conflicting copy rolls the batch back (Z2)."""
     original = trade(0)

@@ -19,6 +19,7 @@ one rounding rule of the module (ADR 0008).
 """
 
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import Decimal
 from fractions import Fraction
@@ -117,6 +118,35 @@ class Lots:
     def lots(self) -> tuple[Lot, ...]:
         """A copy of the open lots, oldest first."""
         return tuple(Lot(lot.quantity, lot.total_cost, lot.unit_cost) for lot in self._lots)
+
+    @property
+    def increment(self) -> Decimal:
+        """The minor unit that rounds a relief after a non-terminating split."""
+        return self._increment
+
+    @property
+    def direction(self) -> int:
+        """+1 long, -1 short, 0 flat."""
+        return self._direction
+
+    @classmethod
+    def restore(cls, increment: Decimal, direction: int, lots: Iterable[Lot]) -> Lots:
+        """Lots as saved by :meth:`lots` and :attr:`direction` (BP6 S9b projection).
+
+        Raises:
+            LotError: an inconsistent state: a direction without lots or the
+                reverse, a lot that is not positive, or a ``unit_cost`` that is
+                not ``total_cost / quantity`` when that quotient terminates.
+        """
+        restored = cls(increment)
+        for lot in lots:
+            if lot.quantity <= 0 or lot.unit_cost != _exact_quotient(lot.total_cost, lot.quantity):
+                raise LotError(f"inconsistent lot {lot}")
+            restored._lots.append(Lot(lot.quantity, lot.total_cost, lot.unit_cost))
+        if direction not in {-1, 0, 1} or (direction == 0) != (not restored._lots):
+            raise LotError(f"direction {direction} with {len(restored._lots)} lots")
+        restored._direction = direction
+        return restored
 
     def trade(self, quantity: Decimal, price: Decimal) -> TradeResult:
         """Apply a fill of signed ``quantity`` (buy > 0, sell < 0) at ``price``.

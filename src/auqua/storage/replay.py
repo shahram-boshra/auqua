@@ -136,6 +136,18 @@ class EventLogReader:
         for record, _ in self._verified(from_sequence):
             yield record
 
+    def records_with_hashes(
+        self, from_sequence: int = 0
+    ) -> Iterator[tuple[LogRecord[Event], bytes]]:
+        """Yield (record, its chain hash) as :meth:`records` does, with the same verification.
+
+        Raises:
+            LogCorruptionError: as :meth:`records`.
+            UpcastRefusedError: as :meth:`records`.
+            ValueError: ``from_sequence`` is negative.
+        """
+        yield from self._verified(from_sequence)
+
     def _verified(self, from_sequence: int) -> Iterator[tuple[LogRecord[Event], bytes]]:
         if from_sequence < 0:
             raise ValueError(f"from_sequence must be >= 0, got {from_sequence}")

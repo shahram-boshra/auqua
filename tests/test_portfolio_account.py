@@ -6,11 +6,13 @@ import datetime
 import uuid
 import zoneinfo
 from decimal import Decimal
+from pathlib import Path
 from typing import TypedDict
 
 import msgspec
 import pytest
 
+from auqua.config.base import Environment
 from auqua.config.portfolio import PortfolioConfig
 from auqua.contracts.codec import encode
 from auqua.contracts.events.account import (
@@ -49,10 +51,15 @@ from auqua.contracts.instruments import (
     Settlement,
 )
 from auqua.contracts.portfolio import PostingKind
-from auqua.portfolio.account import Portfolio
+from auqua.portfolio.account import Portfolio, PortfolioState
 from auqua.portfolio.errors import CorporateActionLateError, PortfolioError
+from auqua.portfolio.store import MIGRATIONS, catch_up, content_sha256
 from auqua.storage.chain import GENESIS, record_hash
+from auqua.storage.eventlog import EventLog
 from auqua.storage.marketview import MarketView
+from auqua.storage.reference import ReferenceIndex
+from auqua.storage.replay import EventLogReader
+from auqua.storage.store import open_store
 
 CHICAGO = zoneinfo.ZoneInfo("America/Chicago")
 CENT = Decimal("0.01")
@@ -574,3 +581,133 @@ def test_unmarked_position_and_written_option() -> None:
     assert (row.quantity, row.unrealized) == (Decimal(-1), Decimal(50))  # 250 received, 200 owed
     assert view.unmargined == (option.id,)  # no margin model for written options
     assert view.equity_base == Decimal(10000) + Decimal(250) - Decimal(200)
+
+
+# --- T19: the projection (S9b; amendment 8) ---------------------------------------------------
+TIMEOUT_MS = 5_000
+
+
+def _append(path: Path, events: list[Event]) -> None:
+    with EventLog(path, Environment.TEST, busy_timeout_ms=TIMEOUT_MS) as log:
+        log.append(events)
+
+
+def _catch_up(
+    log_path: Path, store_path: Path, config: PortfolioConfig | None = None
+) -> tuple[Portfolio, tuple[Event, ...], bool]:
+    with EventLogReader(log_path, Environment.TEST, busy_timeout_ms=TIMEOUT_MS) as reader:
+        market = MarketView.from_reader(reader)
+        connection = open_store(store_path, MIGRATIONS, busy_timeout_ms=TIMEOUT_MS)
+        try:
+            return catch_up(connection, reader, config or _config(), market)
+        finally:
+            connection.close()
+
+
+def _rebuild(log_path: Path, tmp_path: Path) -> PortfolioState:
+    portfolio, _, rebuilt = _catch_up(log_path, tmp_path / "fresh.sqlite3")
+    assert rebuilt
+    return portfolio.state()
+
+
+@pytest.mark.parametrize("cut", range(1, len(_scenario())))
+def test_incremental_fold_equals_a_rebuild(tmp_path: Path, cut: int) -> None:
+    """Resume at every position of the scenario: the state equals a rebuild from 0 (T19)."""
+    events = _scenario()
+    log_path, store_path = tmp_path / "log.sqlite3", tmp_path / "state.sqlite3"
+    _append(log_path, events[:cut])
+    first, derived, rebuilt = _catch_up(log_path, store_path)
+    assert rebuilt
+    _append(log_path, [*derived, *events[cut:]])
+    applied: list[int] = []
+    original = Portfolio.apply
+
+    def counting(self: Portfolio, record: LogRecord[Event], digest: bytes) -> tuple[Event, ...]:
+        applied.append(record.sequence)
+        return original(self, record, digest)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Portfolio, "apply", counting)
+        _, more, rebuilt = _catch_up(log_path, store_path)
+    assert not rebuilt
+    assert applied[0] == first.log_position.next_sequence  # nothing before it re-applied
+    _append(log_path, list(more))
+    final, _, _ = _catch_up(log_path, store_path)
+    assert final.state() == _rebuild(log_path, tmp_path)
+
+
+def _tamper(store_path: Path, sql: str, *, rehash: bool) -> None:
+    connection = open_store(store_path, MIGRATIONS, busy_timeout_ms=TIMEOUT_MS)
+    try:
+        connection.execute(sql)
+        if rehash:
+            connection.execute(
+                "UPDATE portfolio_meta SET value = ? WHERE key = 'content_sha256'",
+                (content_sha256(connection),),
+            )
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    ("sql", "rehash"),
+    [
+        ("UPDATE portfolio_postings SET amount = '1' WHERE position = 0", False),
+        ("UPDATE portfolio_postings SET amount = '0' || amount WHERE position = 0", True),
+        ("UPDATE portfolio_balances SET cash = '1.00' WHERE currency = 'USD'", True),
+        ("UPDATE portfolio_meta SET value = '0' WHERE key = 'projection_schema'", True),
+        ("UPDATE portfolio_meta SET value = '1' WHERE key = 'next_sequence'", True),
+        ("UPDATE portfolio_meta SET value = '999' WHERE key = 'next_sequence'", True),
+    ],
+    ids=["contents", "non-canonical", "balance-sum", "schema", "off-chain", "ahead"],
+)
+def test_invalid_projection_is_rebuilt(tmp_path: Path, sql: str, rehash: bool) -> None:
+    """Corrupted, inconsistent, of another schema, off the chain or ahead: rebuilt from 0."""
+    log_path, store_path = tmp_path / "log.sqlite3", tmp_path / "state.sqlite3"
+    _append(log_path, _scenario())
+    expected, derived, _ = _catch_up(log_path, store_path)
+    _tamper(store_path, sql, rehash=rehash)
+    rebuilt_portfolio, _, rebuilt = _catch_up(log_path, store_path)
+    assert rebuilt
+    assert rebuilt_portfolio.state() == expected.state()
+    assert derived  # the scenario derives events
+
+
+def test_projection_of_another_configuration_is_rebuilt(tmp_path: Path) -> None:
+    """The configuration a projection was folded with is part of its validity."""
+    log_path, store_path = tmp_path / "log.sqlite3", tmp_path / "state.sqlite3"
+    _append(log_path, _scenario())
+    _catch_up(log_path, store_path)
+    other = _config(account_id="other")
+    _, _, rebuilt = _catch_up(log_path, store_path, other)
+    assert rebuilt
+
+
+def test_later_version_known_earlier_does_not_change_folded_state(tmp_path: Path) -> None:
+    """A version appended after the projection, known earlier: folded state unchanged (F-T)."""
+    log_path, store_path = tmp_path / "log.sqlite3", tmp_path / "state.sqlite3"
+    v1 = INSTRUMENTS[0]
+    head = [
+        InstrumentDefined(**_common(1, ct(25, 0)), instrument=v1),
+        CashTransfer(**_common(9, ct(25, 1)), currency="USD", amount=Decimal(1000), reference="t"),
+        _fill(30, AAPL, Side.BUY, "10", "10.00", ct(26, 9)),
+    ]
+    _append(log_path, head)
+    folded, _, _ = _catch_up(log_path, store_path)
+    v2 = msgspec.structs.replace(v1, multiplier=Decimal(2), knowledge_ns=ct(26, 0))
+    _append(
+        log_path,
+        [
+            InstrumentDefined(**_common(2, ct(27, 0)), instrument=v2),
+            _fill(31, AAPL, Side.BUY, "10", "10.00", ct(27, 9)),
+        ],
+    )
+    with EventLogReader(log_path, Environment.TEST, busy_timeout_ms=TIMEOUT_MS) as reader:
+        full = ReferenceIndex.from_records(reader.records())
+    assert full.as_of(AAPL, ct(26, 9), ct(26, 9)) == v2  # a full-log index would see v2
+    resumed, _, rebuilt = _catch_up(log_path, store_path)
+    assert not rebuilt
+    assert resumed.state().postings[: len(folded.postings)] == folded.postings
+    notional = [p.amount for p in resumed.postings if p.kind is PostingKind.TRADE]
+    assert notional == [Decimal("-100.00"), Decimal("-200.00")]  # v1 then v2
+    assert resumed.state() == _rebuild(log_path, tmp_path)
