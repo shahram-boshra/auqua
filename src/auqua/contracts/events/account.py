@@ -50,7 +50,11 @@ class CashTransfer(Event, frozen=True, tag="account.transfer.v1"):
 
 
 class StatementBalance(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
-    """One currency's balance as the venue reports it."""
+    """One currency's cash balance as the venue reports it: cash, excluding accruals.
+
+    Accruals (for example dividend accruals, which venue statements list apart
+    from cash) are not reconciled in phase 1 (BP6 amendment 5, R14).
+    """
 
     currency: str
     amount: Decimal
@@ -138,6 +142,42 @@ class ReconciliationResult(Event, frozen=True, tag="portfolio.reconciliation.v1"
             raise InvalidFieldError("a break lists its differences; a match lists none")
         if self.resolves is not None and self.status is not ReconciliationStatus.MATCHED:
             raise InvalidFieldError("only a matched result resolves a break")
+        _require_increasing([d.field for d in self.differences], "differences")
+
+
+class FxBreak(StrEnum):
+    """Why an FX settlement matched no pending fill (BP6 amendments 3 and 5)."""
+
+    AMOUNTS = "amounts"
+    UNMATCHED = "unmatched"
+    AMBIGUOUS = "ambiguous"
+
+
+class FxSettlementBreak(Event, frozen=True, tag="portfolio.fx_settlement_break.v1"):
+    """An FX settlement that matched no pending fill, and why (BP6 amendment 5).
+
+    Recorded only on a break, apart from statement results, as securities
+    settlement reports matching apart from statements (ISO 15022 MT548
+    unmatched reasons, e.g. CMIS "A matching instruction from your counterparty
+    could not be found", DMON "Settlement amount does not match").
+    ``settlement_id`` is the ``FxSettlement``'s id; ``fill_id`` the referenced
+    fill whose amounts differ (``amounts`` only); ``differences`` are listed
+    exactly for ``amounts``.
+    """
+
+    settlement_id: uuid.UUID
+    reason: FxBreak
+    fill_id: uuid.UUID | None = None
+    differences: tuple[Difference, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Validate that differences and the fill come exactly with ``amounts``."""
+        super().__post_init__()
+        amounts = self.reason is FxBreak.AMOUNTS
+        if amounts != bool(self.differences):
+            raise InvalidFieldError("differences are listed exactly for an amounts break")
+        if amounts != (self.fill_id is not None):
+            raise InvalidFieldError("fill_id is given exactly for an amounts break")
         _require_increasing([d.field for d in self.differences], "differences")
 
 

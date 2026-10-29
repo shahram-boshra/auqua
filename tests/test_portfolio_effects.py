@@ -10,7 +10,7 @@ import msgspec
 import pytest
 
 from auqua.config.portfolio import PortfolioConfig
-from auqua.contracts.events.account import Difference
+from auqua.contracts.events.account import Difference, FxBreak
 from auqua.contracts.events.lifecycle import FundingPaymentV2, FuturesExpiry, FxSettlement
 from auqua.contracts.events.trading import Fill, Side
 from auqua.contracts.identity import InstrumentId
@@ -27,7 +27,6 @@ from auqua.contracts.instruments import (
 )
 from auqua.contracts.portfolio import Posting, PostingKind
 from auqua.portfolio.effects import (
-    FxBreak,
     PendingFx,
     contract_value,
     fee_posting,
@@ -43,6 +42,7 @@ from auqua.portfolio.effects import (
 )
 from auqua.portfolio.errors import ConfigurationError, PortfolioError
 from auqua.portfolio.margin import PerInstrumentMargin, Requirement, margin_rows
+from auqua.portfolio.reconcile import fx_settlement_break
 
 CENT = Decimal("0.01")
 YEN = Decimal(1)
@@ -347,6 +347,42 @@ def test_fx_settlement_with_candidates_on_both_sides_is_ambiguous() -> None:
     match = match_fx_settlement(_settlement(), pending)
     assert (match.matched, match.reason, match.fill_id) == (False, FxBreak.AMBIGUOUS, None)
     assert match_fx_settlement(_settlement(reference=2), pending).matched
+
+
+def test_fx_settlement_breaks_are_recorded_by_reason() -> None:
+    """Each reason becomes one fx_settlement_break.v1; a match records nothing (amendment 5)."""
+    settlement = _settlement(quote="1084999.0000", reference=1)
+    amounts = match_fx_settlement(settlement, _pending(_fx_fill(1, Side.BUY, HOUR)))
+    recorded = fx_settlement_break(settlement, amounts, recorded_ns=2 * DAY + 5)
+    assert recorded is not None
+    assert (recorded.reason, recorded.fill_id, recorded.settlement_id) == (
+        FxBreak.AMOUNTS,
+        uuid.UUID(int=1),
+        settlement.id,
+    )
+    assert recorded.differences == amounts.differences
+    assert (recorded.ts_event_ns, recorded.ts_ingest_ns) == (2 * DAY, 2 * DAY + 5)
+    unmatched = fx_settlement_break(
+        _settlement(), match_fx_settlement(_settlement(), []), recorded_ns=2 * DAY
+    )
+    assert unmatched is not None
+    assert (unmatched.reason, unmatched.fill_id, unmatched.differences) == (
+        FxBreak.UNMATCHED,
+        None,
+        (),
+    )
+    both = _pending(_fx_fill(1, Side.BUY, HOUR), _fx_fill(2, Side.SELL, 2 * HOUR))
+    ambiguous = fx_settlement_break(
+        _settlement(), match_fx_settlement(_settlement(), both), recorded_ns=2 * DAY
+    )
+    assert ambiguous is not None
+    assert ambiguous.reason is FxBreak.AMBIGUOUS
+    assert unmatched.id == ambiguous.id  # derived from the settlement's source and id
+    matched = match_fx_settlement(_settlement(reference=1), _pending(_fx_fill(1, Side.BUY, HOUR)))
+    assert fx_settlement_break(_settlement(reference=1), matched, recorded_ns=2 * DAY) is None
+    other = msgspec.structs.replace(_settlement(), id=uuid.UUID(int=98))
+    with pytest.raises(PortfolioError, match="match of"):
+        fx_settlement_break(other, matched, recorded_ns=2 * DAY)
 
 
 # --- T9: Deribit inverse P&L ---------------------------------------------------------------------
