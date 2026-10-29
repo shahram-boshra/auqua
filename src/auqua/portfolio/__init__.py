@@ -10,5 +10,6 @@ replaced by the BP6 slice. BP6 modules so far: ``ledger`` (postings, balances),
 ``valuation`` (conversion into USD), ``effects`` (futures variation, spot pairs,
 inverse perpetual P&L and funding, FX settlement matching), ``corporate`` (dividends,
 splits), ``options`` (premium, exercise), ``bonds`` (trades with accrued interest,
-coupons), ``margin`` (configured requirements); ``errors``.
+coupons), ``margin`` (configured requirements), ``reconcile`` (statements against the
+account view); ``errors``.
 """

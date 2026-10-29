@@ -29,3 +29,7 @@ class CorporateActionLateError(PortfolioError):
 
 class CorporateActionUnsupportedError(PortfolioError):
     """A corporate action phase 1 does not apply, e.g. a dividend paid before its ex-date (F-G)."""
+
+
+class ReconciliationConflictError(PortfolioError):
+    """A statement re-sent with the same id and other content (BP6 section 4.7)."""
