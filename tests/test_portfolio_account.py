@@ -13,6 +13,7 @@ import msgspec
 import pytest
 
 from auqua.config.base import Environment
+from auqua.config.identity import config_id
 from auqua.config.portfolio import PortfolioConfig
 from auqua.contracts.codec import encode
 from auqua.contracts.events.account import (
@@ -592,14 +593,17 @@ def _append(path: Path, events: list[Event]) -> None:
         log.append(events)
 
 
+CODE = "c" * 64
+
+
 def _catch_up(
-    log_path: Path, store_path: Path, config: PortfolioConfig | None = None
+    log_path: Path, store_path: Path, config: PortfolioConfig | None = None, code: str = CODE
 ) -> tuple[Portfolio, tuple[Event, ...], bool]:
     with EventLogReader(log_path, Environment.TEST, busy_timeout_ms=TIMEOUT_MS) as reader:
         market = MarketView.from_reader(reader)
         connection = open_store(store_path, MIGRATIONS, busy_timeout_ms=TIMEOUT_MS)
         try:
-            return catch_up(connection, reader, config or _config(), market)
+            return catch_up(connection, reader, config or _config(), market, code_id=code)
         finally:
             connection.close()
 
@@ -673,14 +677,20 @@ def test_invalid_projection_is_rebuilt(tmp_path: Path, sql: str, rehash: bool) -
     assert derived  # the scenario derives events
 
 
-def test_projection_of_another_configuration_is_rebuilt(tmp_path: Path) -> None:
-    """The configuration a projection was folded with is part of its validity."""
+def test_projection_of_another_configuration_or_code_is_rebuilt(tmp_path: Path) -> None:
+    """The configuration identity and the code identifier are part of validity (a76)."""
     log_path, store_path = tmp_path / "log.sqlite3", tmp_path / "state.sqlite3"
     _append(log_path, _scenario())
     _catch_up(log_path, store_path)
-    other = _config(account_id="other")
-    _, _, rebuilt = _catch_up(log_path, store_path, other)
-    assert rebuilt
+    assert not _catch_up(log_path, store_path)[2]  # same configuration and code: resumed
+    connection = open_store(store_path, MIGRATIONS, busy_timeout_ms=TIMEOUT_MS)
+    try:
+        stamped = dict(connection.execute("SELECT key, value FROM portfolio_meta").fetchall())
+    finally:
+        connection.close()
+    assert (stamped["config_id"], stamped["code_id"]) == (config_id(_config()), CODE)
+    assert _catch_up(log_path, store_path, _config(account_id="other"))[2]
+    assert _catch_up(log_path, store_path, code="d" * 64)[2]
 
 
 def test_later_version_known_earlier_does_not_change_folded_state(tmp_path: Path) -> None:

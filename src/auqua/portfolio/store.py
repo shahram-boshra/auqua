@@ -11,8 +11,12 @@ stored as their exact text, ``str(value)`` — the event codec's encoding
 (amendment 8, F-S; ADR 0034 records the exception to ADR 0023). Postings are
 stored with the balances; the balances must equal their sums (F-U).
 
-At start the projection is valid only if (BP6 C8, D5): its schema and the
-configuration it was folded with are the current ones; its ``next_sequence``
+At start the projection is valid only if (BP6 C8, D5): its schema, the
+configuration identity (ADR 0020 ``config_id``) and the code identifier it was
+folded with are the current ones — the code identifier is passed in by the
+caller (BP5 ``code_id``; the portfolio does not import the analytics, contract
+8), because the table layout's version does not cover the fold's semantics
+(amendment 9); its ``next_sequence``
 is at most the log's head; its hash is the log's hash at that position; its
 contents hash to the stored SHA-256; every decimal is canonical text; the
 balances equal the sums of the postings and the positions those of the lots;
@@ -27,7 +31,6 @@ later, even one "known" earlier, cannot change state already folded.
 
 import datetime
 import hashlib
-import json
 import sqlite3
 import uuid
 from collections.abc import Iterable
@@ -36,6 +39,7 @@ from typing import Any
 
 import msgspec
 
+from auqua.config.identity import config_id
 from auqua.config.portfolio import PortfolioConfig
 from auqua.contracts.codec import CANONICAL, encode
 from auqua.contracts.errors import EventDecodeError
@@ -148,12 +152,6 @@ class ProjectionInvalidError(PortfolioError):
     """The stored projection cannot be used; the account is rebuilt from sequence 0."""
 
 
-def config_sha256(config: PortfolioConfig) -> str:
-    """SHA-256 of the configuration a projection was folded with (canonical JSON)."""
-    document = json.dumps(config.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(document.encode()).hexdigest()
-
-
 # --- encoding -----------------------------------------------------------------------------------
 def _text(value: Decimal) -> str:
     return str(value)
@@ -180,17 +178,25 @@ def _event[E: Event](data: bytes, kind: type[E]) -> E:
     return event
 
 
+def _meta_rows(
+    state: PortfolioState, config: PortfolioConfig, code_id: str
+) -> list[tuple[str, str]]:
+    """The stamp: schema, configuration identity, code identifier, log position and clock."""
+    return [
+        ("projection_schema", PROJECTION_SCHEMA),
+        ("config_id", config_id(config)),
+        ("code_id", code_id),
+        ("next_sequence", str(state.log_position.next_sequence)),
+        ("hash", state.log_position.hash),
+        ("clock_ns", str(state.clock_ns)),
+        ("order", str(state.order)),
+    ]
+
+
 def _rows(state: PortfolioState, config: PortfolioConfig) -> dict[str, list[tuple[Any, ...]]]:
+    """The state tables (everything but the meta stamp)."""
     ledger = Ledger.from_postings(config.account_id, state.postings)
     rows: dict[str, list[tuple[Any, ...]]] = {
-        "portfolio_meta": [
-            ("projection_schema", PROJECTION_SCHEMA),
-            ("config_sha256", config_sha256(config)),
-            ("next_sequence", str(state.log_position.next_sequence)),
-            ("hash", state.log_position.hash),
-            ("clock_ns", str(state.clock_ns)),
-            ("order", str(state.order)),
-        ],
         "portfolio_postings": [
             (n, p.account, p.currency, _text(p.amount), p.kind.value, str(p.cause_id))
             for n, p in enumerate(state.postings)
@@ -277,9 +283,22 @@ def content_sha256(connection: sqlite3.Connection) -> str:
 
 
 # --- save ---------------------------------------------------------------------------------------
-def save(connection: sqlite3.Connection, portfolio: Portfolio, config: PortfolioConfig) -> None:
-    """Replace the projection with ``portfolio``'s state, in one transaction."""
-    rows = _rows(portfolio.state(), config)
+def save(
+    connection: sqlite3.Connection,
+    portfolio: Portfolio,
+    config: PortfolioConfig,
+    *,
+    code_id: str,
+) -> None:
+    """Replace the projection with ``portfolio``'s state, in one transaction.
+
+    ``code_id`` identifies the code that folded it (BP5 ``analytics.lineage.code_id``).
+    """
+    state = portfolio.state()
+    rows: dict[str, list[tuple[Any, ...]]] = {
+        "portfolio_meta": list(_meta_rows(state, config, code_id)),
+        **_rows(state, config),
+    }
     connection.execute("BEGIN IMMEDIATE")
     try:
         for name, _, _ in _TABLES:
@@ -409,20 +428,25 @@ def load(
     reader: EventLogReader,
     config: PortfolioConfig,
     market: MarketView,
+    *,
+    code_id: str,
 ) -> Portfolio:
     """The account from a valid projection, or ``ProjectionInvalidError`` (rebuild from 0).
 
     Raises:
-        ProjectionInvalidError: the projection is missing, of another schema or
-            configuration, ahead of the log, not on its chain, corrupted, or inconsistent.
+        ProjectionInvalidError: the projection is missing, of another schema,
+            configuration or code, ahead of the log, not on its chain, corrupted,
+            or inconsistent.
     """
     meta = _meta(connection)
     if not meta:
         raise ProjectionInvalidError("no projection")
     if meta.get("projection_schema") != PROJECTION_SCHEMA:
         raise ProjectionInvalidError(f"projection schema {meta.get('projection_schema')}")
-    if meta.get("config_sha256") != config_sha256(config):
+    if meta.get("config_id") != config_id(config):
         raise ProjectionInvalidError("folded with another configuration")
+    if meta.get("code_id") != code_id:
+        raise ProjectionInvalidError("folded by other code")
     if meta.get("content_sha256") != content_sha256(connection):
         raise ProjectionInvalidError("contents do not match their SHA-256")
     try:
@@ -456,18 +480,23 @@ def catch_up(
     reader: EventLogReader,
     config: PortfolioConfig,
     market: MarketView,
+    *,
+    code_id: str,
 ) -> tuple[Portfolio, tuple[Event, ...], bool]:
     """Fold the log into the projection: from the stored position, or from 0 when invalid.
 
-    Returns the account, the events derived while folding (for the caller to
-    append to the log) and whether the projection was rebuilt from 0.
+    ``code_id`` identifies the running code (the caller computes it with
+    ``analytics.lineage.code_id``). Returns the account, the events derived
+    while folding (for the caller to append to the log) and whether the
+    projection was rebuilt from 0.
     """
     try:
-        portfolio, rebuilt = load(connection, reader, config, market), False
+        portfolio = load(connection, reader, config, market, code_id=code_id)
+        rebuilt = False
     except ProjectionInvalidError:
         portfolio, rebuilt = Portfolio(config, market), True
     derived: list[Event] = []
     for record, digest in reader.records_with_hashes(portfolio.log_position.next_sequence):
         derived += portfolio.apply(record, digest)
-    save(connection, portfolio, config)
+    save(connection, portfolio, config, code_id=code_id)
     return portfolio, tuple(derived), rebuilt
