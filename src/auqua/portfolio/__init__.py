@@ -8,5 +8,7 @@ Owned by BP6, Portfolio & Capital. Walking-skeleton (thin) module: ``book`` (ADR
 replaced by the BP6 slice. BP6 modules so far: ``ledger`` (postings, balances),
 ``lots`` (first-in, first-out lots), ``daycount`` (sourced day counts, accrued interest),
 ``valuation`` (conversion into USD), ``effects`` (futures variation, spot pairs,
-inverse perpetual P&L and funding), ``margin`` (configured requirements); ``errors``.
+inverse perpetual P&L and funding, FX settlement matching), ``corporate`` (dividends,
+splits), ``options`` (premium, exercise), ``bonds`` (trades with accrued interest,
+coupons), ``margin`` (configured requirements); ``errors``.
 """

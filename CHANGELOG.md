@@ -116,6 +116,13 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   else by its amounts before the value date; a difference, no candidate, or
   candidates on both sides is a break, never a guess. Funding without a
   reported amount is refused in phase 1.
+  Corporate actions: a cash dividend fixed at its ex-date (a receivable for
+  the units held before it, cash on the pay date; recorded at or after its
+  ex-date, or paid before it, refused), split and stock-dividend lot
+  multipliers. Options: premium, physical exercise of calls at the strike,
+  cash settlement from the exercise settlement value (OCC). Bonds: the clean
+  notional and the reported accrued interest on fills (required with a
+  coupon), coupons per unit held.
 
 ### Changed
 
