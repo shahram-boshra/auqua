@@ -9,7 +9,7 @@ instrument-level facts; their effect on positions and cash is computed by BP6.
 from decimal import Decimal
 from enum import StrEnum
 
-from auqua.contracts.errors import InvalidFieldError
+from auqua.contracts.errors import InvalidFieldError, UpcastRefusedError
 from auqua.contracts.events.base import Event, require_decimals
 from auqua.contracts.identity import InstrumentId
 from auqua.contracts.instruments import CURRENCY_CODE, Settlement
@@ -17,6 +17,7 @@ from auqua.contracts.validation import (
     require_match,
     require_non_negative,
     require_positive,
+    require_positive_int,
     require_time_ns,
 )
 
@@ -52,29 +53,103 @@ class CorporateAction(Event, frozen=True, tag="lifecycle.corporate_action.v1"):
     def __post_init__(self) -> None:
         """Validate the fields each kind requires and forbids."""
         super().__post_init__()
-        require_time_ns(self.effective_ns, "effective_ns")
-        require_decimals(ratio=self.ratio, cash_amount=self.cash_amount)
-        needs_ratio = self.kind in {CorporateActionKind.SPLIT, CorporateActionKind.STOCK_DIVIDEND}
-        needs_cash = self.kind is CorporateActionKind.CASH_DIVIDEND
-        needs_new_id = self.kind is CorporateActionKind.SYMBOL_CHANGE
-        if needs_ratio != (self.ratio is not None):
-            raise InvalidFieldError(f"{self.kind} {'needs' if needs_ratio else 'forbids'} ratio")
-        if needs_cash != (self.cash_amount is not None and self.currency is not None):
-            raise InvalidFieldError(
-                f"{self.kind} {'needs' if needs_cash else 'forbids'} cash terms"
-            )
-        if not needs_cash and self.currency is not None:
-            raise InvalidFieldError(f"{self.kind} forbids currency")
-        if needs_new_id != (self.new_instrument_id is not None):
-            raise InvalidFieldError(
-                f"{self.kind} {'needs' if needs_new_id else 'forbids'} new_instrument_id"
-            )
-        if self.ratio is not None:
-            require_positive(self.ratio, "ratio")
-        if self.cash_amount is not None:
-            require_positive(self.cash_amount, "cash_amount")
-        if self.currency is not None:
-            require_match(self.currency, CURRENCY_CODE, "currency")
+        _require_terms(self)
+
+
+def _require_terms(action: CorporateAction | CorporateActionV2) -> None:
+    """The terms each kind requires and forbids (both versions)."""
+    require_time_ns(action.effective_ns, "effective_ns")
+    require_decimals(ratio=action.ratio, cash_amount=action.cash_amount)
+    kind = action.kind
+    needs_ratio = kind in {CorporateActionKind.SPLIT, CorporateActionKind.STOCK_DIVIDEND}
+    needs_cash = kind is CorporateActionKind.CASH_DIVIDEND
+    needs_new_id = kind is CorporateActionKind.SYMBOL_CHANGE
+    if needs_ratio != (action.ratio is not None):
+        raise InvalidFieldError(f"{kind} {'needs' if needs_ratio else 'forbids'} ratio")
+    if needs_cash != (action.cash_amount is not None and action.currency is not None):
+        raise InvalidFieldError(f"{kind} {'needs' if needs_cash else 'forbids'} cash terms")
+    if not needs_cash and action.currency is not None:
+        raise InvalidFieldError(f"{kind} forbids currency")
+    if needs_new_id != (action.new_instrument_id is not None):
+        raise InvalidFieldError(
+            f"{kind} {'needs' if needs_new_id else 'forbids'} new_instrument_id"
+        )
+    if action.ratio is not None:
+        require_positive(action.ratio, "ratio")
+    if action.cash_amount is not None:
+        require_positive(action.cash_amount, "cash_amount")
+    if action.currency is not None:
+        require_match(action.currency, CURRENCY_CODE, "currency")
+
+
+class CorporateActionV2(Event, frozen=True, tag="lifecycle.corporate_action.v2"):
+    """Corporate action with the three dates of a cash dividend (BP6 C1).
+
+    As version 1, plus ``ex_date_ns``, ``record_date_ns`` and ``pay_date_ns``:
+    each the start of that date in the listing venue's time zone, as UTC
+    nanoseconds, set by the producer. They are required for a cash dividend and
+    forbidden for the other kinds. Entitlement is fixed at the ex-date (a
+    purchase on or after it does not receive the dividend), so for a cash
+    dividend ``effective_ns`` equals ``ex_date_ns``; for the other kinds
+    ``effective_ns`` keeps its version-1 meaning. The dates are not ordered
+    here: for a distribution of 25 percent or more the ex-date follows the
+    payable date (FINRA Rule 11140(b)(2)).
+    """
+
+    instrument_id: InstrumentId
+    kind: CorporateActionKind
+    effective_ns: int
+    ratio: Decimal | None = None
+    cash_amount: Decimal | None = None
+    currency: str | None = None
+    new_instrument_id: InstrumentId | None = None
+    ex_date_ns: int | None = None
+    record_date_ns: int | None = None
+    pay_date_ns: int | None = None
+
+    def __post_init__(self) -> None:
+        """Validate the terms and the dividend dates."""
+        super().__post_init__()
+        _require_terms(self)
+        dates = (self.ex_date_ns, self.record_date_ns, self.pay_date_ns)
+        if self.kind is not CorporateActionKind.CASH_DIVIDEND:
+            if any(d is not None for d in dates):
+                raise InvalidFieldError(f"{self.kind} forbids dividend dates")
+            return
+        if self.ex_date_ns is None or self.record_date_ns is None or self.pay_date_ns is None:
+            raise InvalidFieldError("cash_dividend needs ex, record and pay dates")
+        require_time_ns(self.ex_date_ns, "ex_date_ns")
+        require_time_ns(self.record_date_ns, "record_date_ns")
+        require_time_ns(self.pay_date_ns, "pay_date_ns")
+        if self.effective_ns != self.ex_date_ns:
+            raise InvalidFieldError("cash_dividend effective_ns must equal ex_date_ns")
+
+
+def upcast_corporate_action(event: CorporateAction) -> CorporateActionV2:
+    """``lifecycle.corporate_action.v1`` → v2; a v1 cash dividend is refused.
+
+    Raises:
+        UpcastRefusedError: a cash dividend: its ex, record and pay dates are
+            not in version 1 and cannot be derived.
+    """
+    if event.kind is CorporateActionKind.CASH_DIVIDEND:
+        raise UpcastRefusedError(
+            f"lifecycle.corporate_action.v1 cash_dividend {event.id}"
+            " has no ex, record and pay dates"
+        )
+    return CorporateActionV2(
+        id=event.id,
+        source=event.source,
+        ts_event_ns=event.ts_event_ns,
+        ts_ingest_ns=event.ts_ingest_ns,
+        instrument_id=event.instrument_id,
+        kind=event.kind,
+        effective_ns=event.effective_ns,
+        ratio=event.ratio,
+        cash_amount=event.cash_amount,
+        currency=event.currency,
+        new_instrument_id=event.new_instrument_id,
+    )
 
 
 class FuturesExpiry(Event, frozen=True, tag="lifecycle.futures_expiry.v1"):
@@ -157,6 +232,39 @@ class FundingPayment(Event, frozen=True, tag="lifecycle.funding_payment.v1"):
         super().__post_init__()
         require_decimals(funding_rate=self.funding_rate)
         require_positive(self.mark_price, "mark_price")
+
+
+class FundingPaymentV2(Event, frozen=True, tag="lifecycle.funding_payment.v2"):
+    """Perpetual-swap funding for the period ``interval_ns`` ending at ``ts_event_ns`` (BP6 D3).
+
+    Positive ``funding_rate``: longs pay shorts. ``amount``, when present, is
+    the payment the venue reports, signed (positive = received) and in the
+    instrument's settlement currency; it is posted as reported (BP6 E2).
+    """
+
+    instrument_id: InstrumentId
+    funding_rate: Decimal
+    mark_price: Decimal
+    interval_ns: int
+    amount: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        """Validate the rate, mark price, period and reported amount."""
+        super().__post_init__()
+        require_decimals(funding_rate=self.funding_rate, amount=self.amount)
+        require_positive(self.mark_price, "mark_price")
+        require_positive_int(self.interval_ns, "interval_ns")
+
+
+def upcast_funding_payment(event: FundingPayment) -> FundingPaymentV2:
+    """``lifecycle.funding_payment.v1`` has no period: it cannot be upcast (BP6 D3).
+
+    Raises:
+        UpcastRefusedError: always.
+    """
+    raise UpcastRefusedError(
+        f"lifecycle.funding_payment.v1 {event.id} has no funding period (interval_ns)"
+    )
 
 
 class CouponPayment(Event, frozen=True, tag="lifecycle.coupon_payment.v1"):

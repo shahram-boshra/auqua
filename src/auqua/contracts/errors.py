@@ -25,3 +25,7 @@ class InvalidFieldError(ContractError):
 
 class EventDecodeError(ContractError):
     """Bytes do not decode into a known, valid canonical event."""
+
+
+class UpcastRefusedError(EventDecodeError):
+    """A stored legacy event lacks data its current version requires; it is never guessed."""

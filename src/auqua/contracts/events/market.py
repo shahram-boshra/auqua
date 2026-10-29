@@ -12,6 +12,7 @@ available for point-in-time use at ``ts_published_ns`` when the source states
 a publication time, otherwise at ``ts_event_ns`` (BP4 section 4.6).
 """
 
+import datetime
 from decimal import Decimal
 from enum import StrEnum
 
@@ -135,5 +136,26 @@ class ReferenceRate(Event, frozen=True, tag="market.reference_rate.v1"):
         require_decimals(value=self.value)
         if not self.unit.strip() or self.unit != self.unit.strip():
             raise InvalidFieldError(f"unit {self.unit!r} must be non-empty and trimmed")
+        _require_published(self.ts_published_ns, self.ts_event_ns)
+        _require_revision(self.revision)
+
+
+class SettlementPrice(Event, frozen=True, tag="market.settlement_price.v1"):
+    """Official daily settlement price of a future for one trading date (BP6 section 4.1).
+
+    ``ts_published_ns`` is when the exchange published it: its availability
+    for point-in-time use (ADR 0028).
+    """
+
+    instrument_id: InstrumentId
+    trading_date: datetime.date
+    price: Decimal
+    ts_published_ns: int
+    revision: int = 0
+
+    def __post_init__(self) -> None:
+        """Validate the price, the publication time and the revision."""
+        super().__post_init__()
+        require_decimals(price=self.price)
         _require_published(self.ts_published_ns, self.ts_event_ns)
         _require_revision(self.revision)
