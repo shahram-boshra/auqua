@@ -79,7 +79,12 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   `lifecycle.corporate_action.v2` (ex, record and pay dates of a cash dividend)
   and `lifecycle.funding_payment.v2` (funding period, venue-reported amount);
   a stored version 1 that cannot be upcast (a cash dividend, any funding
-  payment) is refused with its log sequence, never guessed.
+  payment) is refused with its log sequence, never guessed. The account view
+  read by risk (`auqua.contracts.portfolio`: postings, balances with
+  receivables, positions with filled and working quantities kept apart,
+  margin, base-currency conversions, explicit "unavailable" markers) and the
+  `portfolio.snapshot.v1` event; `numeric.exact` runs arithmetic that must not
+  round.
 
 ### Changed
 

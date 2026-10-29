@@ -42,6 +42,7 @@ from auqua.contracts.events import (
     Trade,
 )
 from auqua.contracts.events.account import (
+    AccountSnapshot,
     AccountStatement,
     CashTransfer,
     Difference,
@@ -75,6 +76,7 @@ from auqua.contracts.events.trading import (
 )
 from auqua.contracts.identity import InstrumentId, SeriesId, new_id
 from auqua.contracts.instruments import CryptoSpot, Identifiers, Settlement
+from auqua.contracts.portfolio import AccountView, Balance, LogPosition, PositionView
 
 SNAPSHOT = Path(__file__).parent / "snapshots" / "canonical_events.schema.json"
 BTC = InstrumentId("BINANCE", "BTCUSDT")
@@ -235,6 +237,17 @@ def _account_examples() -> list[Event]:
             statement_sha256="0" * 64,
             status=ReconciliationStatus.BREAK,
             differences=(Difference("balance:USD", Decimal(1), Decimal(2)),),
+        ),
+        AccountSnapshot(
+            **_common(new_id()),
+            view=AccountView(
+                account_id="research",
+                as_of_ns=T0,
+                log_position=LogPosition(next_sequence=3, hash="0" * 64),
+                equity_base=Decimal("100000.00"),
+                balances=(Balance("USDT", Decimal("100000.00")),),
+                positions=(PositionView(BTC, "USDT", Decimal(0)),),
+            ),
         ),
     ]
 

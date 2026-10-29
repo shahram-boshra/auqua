@@ -15,10 +15,15 @@ from decimal import Decimal
 from enum import StrEnum
 
 from auqua.contracts.errors import InvalidFieldError
-from auqua.contracts.events.base import Event, require_decimals
+from auqua.contracts.events.base import Event
 from auqua.contracts.identity import InstrumentId
 from auqua.contracts.instruments import CURRENCY_CODE
-from auqua.contracts.validation import require_match, require_non_negative, require_positive
+from auqua.contracts.validation import (
+    require_decimals,
+    require_match,
+    require_non_negative,
+    require_positive,
+)
 
 _SHA256_HEX = 64
 

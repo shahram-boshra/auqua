@@ -17,13 +17,11 @@ event in a :class:`LogRecord`.
 """
 
 import uuid
-from decimal import Decimal
 
 import msgspec
 
 from auqua.contracts.errors import InvalidFieldError
 from auqua.contracts.identity import require_source
-from auqua.contracts.numeric import require_finite
 from auqua.contracts.validation import require_time_ns
 
 
@@ -48,13 +46,6 @@ class Event(msgspec.Struct, frozen=True, forbid_unknown_fields=True, tag_field="
         require_source(self.source)
         require_time_ns(self.ts_event_ns, "ts_event_ns")
         require_time_ns(self.ts_ingest_ns, "ts_ingest_ns")
-
-
-def require_decimals(**values: Decimal | None) -> None:
-    """Refuse non-finite or negative-zero decimals among keyword values (``None`` skipped)."""
-    for name, value in values.items():
-        if value is not None:
-            require_finite(value, name)
 
 
 class LogRecord[E: Event](msgspec.Struct, frozen=True, forbid_unknown_fields=True):

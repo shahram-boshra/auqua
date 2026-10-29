@@ -7,7 +7,12 @@ that adds event types places them in ``auqua.contracts.events.<domain>`` and
 adds them to this union.
 """
 
-from auqua.contracts.events.account import AccountStatement, CashTransfer, ReconciliationResult
+from auqua.contracts.events.account import (
+    AccountSnapshot,
+    AccountStatement,
+    CashTransfer,
+    ReconciliationResult,
+)
 from auqua.contracts.events.ingest import DataGap, IngestRun
 from auqua.contracts.events.lifecycle import (
     CorporateAction,
@@ -60,9 +65,11 @@ CanonicalEvent = (
     | CashTransfer
     | AccountStatement
     | ReconciliationResult
+    | AccountSnapshot
 )
 
 __all__ = [
+    "AccountSnapshot",
     "AccountStatement",
     "Bar",
     "CanonicalEvent",

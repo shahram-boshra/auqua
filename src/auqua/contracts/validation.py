@@ -27,6 +27,13 @@ def require_match(value: str, pattern: re.Pattern[str], name: str) -> None:
         raise InvalidFieldError(f"{name} {value!r} does not match {pattern.pattern}")
 
 
+def require_decimals(**values: Decimal | None) -> None:
+    """Refuse non-finite or negative-zero decimals among keyword values (``None`` skipped)."""
+    for name, value in values.items():
+        if value is not None:
+            require_finite(value, name)
+
+
 def require_positive(value: Decimal, name: str) -> None:
     """Refuse decimals that are not finite and strictly positive."""
     require_finite(value, name)

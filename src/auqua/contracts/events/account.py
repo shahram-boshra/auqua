@@ -7,7 +7,8 @@ reports balances and positions as the venue holds them; a reconciliation
 result compares one statement with the account the platform computed and is
 keyed by the statement's id and the SHA-256 of its canonical encoding, so the
 same statement yields one result. Statement rows are in strictly increasing
-key order, which makes that encoding canonical.
+key order, which makes that encoding canonical. An account snapshot records an
+:class:`~auqua.contracts.portfolio.AccountView` for audit.
 """
 
 import itertools
@@ -18,10 +19,12 @@ from enum import StrEnum
 import msgspec
 
 from auqua.contracts.errors import InvalidFieldError
-from auqua.contracts.events.base import Event, require_decimals
+from auqua.contracts.events.base import Event
 from auqua.contracts.identity import InstrumentId
 from auqua.contracts.instruments import CURRENCY_CODE
+from auqua.contracts.portfolio import AccountView
 from auqua.contracts.validation import (
+    require_decimals,
     require_label,
     require_match,
     require_sha256,
@@ -136,3 +139,9 @@ class ReconciliationResult(Event, frozen=True, tag="portfolio.reconciliation.v1"
         if self.resolves is not None and self.status is not ReconciliationStatus.MATCHED:
             raise InvalidFieldError("only a matched result resolves a break")
         _require_increasing([d.field for d in self.differences], "differences")
+
+
+class AccountSnapshot(Event, frozen=True, tag="portfolio.snapshot.v1"):
+    """The account view at a log position, recorded for audit (BP6 section 4.8)."""
+
+    view: AccountView

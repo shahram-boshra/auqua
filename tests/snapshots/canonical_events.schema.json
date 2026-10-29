@@ -1,5 +1,42 @@
 {
   "$defs": {
+    "AccountSnapshot": {
+      "additionalProperties": false,
+      "description": "The account view at a log position, recorded for audit (BP6 section 4.8).",
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "portfolio.snapshot.v1"
+          ]
+        },
+        "view": {
+          "$ref": "#/$defs/AccountView"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "view"
+      ],
+      "title": "AccountSnapshot",
+      "type": "object"
+    },
     "AccountStatement": {
       "additionalProperties": false,
       "description": "Balances and positions of the account as the venue reports them at ``as_of_ns``.",
@@ -55,6 +92,82 @@
       "title": "AccountStatement",
       "type": "object"
     },
+    "AccountView": {
+      "additionalProperties": false,
+      "description": "The account at ``as_of_ns`` as of ``log_position`` (BP6 section 4.8).\n\n``equity_base`` is the equity in :data:`BASE_CURRENCY`, or ``None`` when a\nconversion is unavailable; ``unconverted`` then lists the currencies\nwithout a rate. ``unmargined`` lists instruments with a position and no\nmargin entry: margin is incomplete while it is not empty (amendment 1).",
+      "properties": {
+        "account_id": {
+          "type": "string"
+        },
+        "as_of_ns": {
+          "type": "integer"
+        },
+        "balances": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Balance"
+          },
+          "type": "array"
+        },
+        "conversions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Conversion"
+          },
+          "type": "array"
+        },
+        "equity_base": {
+          "anyOf": [
+            {
+              "format": "decimal",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "log_position": {
+          "$ref": "#/$defs/LogPosition"
+        },
+        "margin": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/MarginView"
+          },
+          "type": "array"
+        },
+        "positions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PositionView"
+          },
+          "type": "array"
+        },
+        "unconverted": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "unmargined": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/InstrumentId"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "account_id",
+        "as_of_ns",
+        "log_position",
+        "equity_base"
+      ],
+      "title": "AccountView",
+      "type": "object"
+    },
     "Aggressor": {
       "description": "Side that initiated a trade, when the venue reports it.",
       "enum": [
@@ -72,6 +185,30 @@
         "unknown"
       ],
       "title": "AvailabilityBasis"
+    },
+    "Balance": {
+      "additionalProperties": false,
+      "description": "Cash and receivable of one currency (BP6 section 4.2).",
+      "properties": {
+        "cash": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "receivable": {
+          "default": "0",
+          "format": "decimal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "cash"
+      ],
+      "title": "Balance",
+      "type": "object"
     },
     "Bar": {
       "additionalProperties": false,
@@ -300,6 +437,51 @@
         "verified"
       ],
       "title": "ChecksumResult"
+    },
+    "Conversion": {
+      "additionalProperties": false,
+      "description": "One conversion into the base currency (BP6 section 4.4).\n\n``unit`` is the rate's published quote convention (for example\n``\"EUR per USD\"``), which decides whether the amount is divided or\nmultiplied; ``value`` is rounded once to the base currency's minor units.",
+      "properties": {
+        "amount": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "from_currency": {
+          "type": "string"
+        },
+        "rate": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "rate_available_ns": {
+          "type": "integer"
+        },
+        "source": {
+          "type": "string"
+        },
+        "to_currency": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "value": {
+          "format": "decimal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount",
+        "from_currency",
+        "to_currency",
+        "rate",
+        "unit",
+        "source",
+        "rate_available_ns",
+        "value"
+      ],
+      "title": "Conversion",
+      "type": "object"
     },
     "CorporateActionKind": {
       "description": "Corporate actions handled in phase 1.",
@@ -1417,6 +1599,63 @@
       "title": "InstrumentId",
       "type": "object"
     },
+    "LogPosition": {
+      "additionalProperties": false,
+      "description": "The log position a view reflects: the next sequence and the hash of the last record.",
+      "properties": {
+        "hash": {
+          "type": "string"
+        },
+        "next_sequence": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "next_sequence",
+        "hash"
+      ],
+      "title": "LogPosition",
+      "type": "object"
+    },
+    "MarginView": {
+      "additionalProperties": false,
+      "description": "Margin of one currency (BP6 section 4.6).\n\nThe requirement is (``initial``, ``maintenance``); the margin in use is\n``initial``; ``available`` = ``equity`` - ``initial`` and ``deficit`` =\nmax(0, ``maintenance`` - ``equity``). All are exact and never rounded.",
+      "properties": {
+        "available": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "deficit": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "equity": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "initial": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "maintenance": {
+          "format": "decimal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "initial",
+        "maintenance",
+        "equity",
+        "available",
+        "deficit"
+      ],
+      "title": "MarginView",
+      "type": "object"
+    },
     "Option": {
       "additionalProperties": false,
       "description": "Listed option.",
@@ -1794,6 +2033,69 @@
         "linear"
       ],
       "title": "PerpetualType"
+    },
+    "PositionView": {
+      "additionalProperties": false,
+      "description": "One instrument's position (BP6 section 4.8, C7).\n\n``quantity`` is the filled position and ``working`` the accepted, unfilled\norders, both signed and kept apart: decisions and the pre-trade check use\n``quantity + working`` (BP5 section 12, L7). ``mark`` is the latest\navailable mark and ``unrealized`` the profit or loss of ``quantity`` at\nit, in ``currency``; an unmarked position has neither.",
+      "properties": {
+        "currency": {
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "mark": {
+          "anyOf": [
+            {
+              "format": "decimal",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mark_available_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quantity": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "unrealized": {
+          "anyOf": [
+            {
+              "format": "decimal",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "working": {
+          "default": "0",
+          "format": "decimal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "instrument_id",
+        "currency",
+        "quantity"
+      ],
+      "title": "PositionView",
+      "type": "object"
     },
     "Quote": {
       "additionalProperties": false,
@@ -2594,6 +2896,9 @@
   },
   "anyOf": [
     {
+      "$ref": "#/$defs/AccountSnapshot"
+    },
+    {
       "$ref": "#/$defs/AccountStatement"
     },
     {
@@ -2695,6 +3000,7 @@
       "market.trade.v1": "#/$defs/Trade",
       "order.submitted.v1": "#/$defs/OrderSubmitted",
       "portfolio.reconciliation.v1": "#/$defs/ReconciliationResult",
+      "portfolio.snapshot.v1": "#/$defs/AccountSnapshot",
       "portfolio.target.v1": "#/$defs/Target",
       "reference.instrument.v1": "#/$defs/InstrumentDefined",
       "research.run.v2": "#/$defs/RunStartedV2",

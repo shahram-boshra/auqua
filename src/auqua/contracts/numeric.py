@@ -69,6 +69,18 @@ def arithmetic() -> Iterator[decimal.Context]:
         yield ctx
 
 
+@contextmanager
+def exact() -> Iterator[decimal.Context]:
+    """Run a block under :func:`context` with ``Inexact`` trapped: every result is exact or raises.
+
+    Products and sums in trading state use it (BP6 section 7); rounding happens
+    only in :func:`quantize` and :func:`divide`.
+    """
+    with arithmetic() as ctx:
+        ctx.traps[decimal.Inexact] = True
+        yield ctx
+
+
 def require_finite(value: Decimal, name: str) -> None:
     """Refuse NaN, infinities and negative zero.
 
@@ -174,8 +186,7 @@ def _to_grid(value: Fraction, increment: Decimal, rounding: Rounding) -> Decimal
     """The one rounding: ``value`` to a multiple of ``increment`` under ``rounding``."""
     ratio = value / Fraction(increment)
     units = _round_ratio(ratio.numerator, ratio.denominator, Rounding(rounding))
-    with arithmetic() as ctx:
-        ctx.traps[decimal.Inexact] = True
+    with exact():
         return (Decimal(units) * increment).quantize(Decimal(1).scaleb(_exponent(increment)))
 
 

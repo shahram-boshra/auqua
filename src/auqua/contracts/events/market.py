@@ -17,9 +17,10 @@ from decimal import Decimal
 from enum import StrEnum
 
 from auqua.contracts.errors import InvalidFieldError
-from auqua.contracts.events.base import Event, require_decimals
+from auqua.contracts.events.base import Event
 from auqua.contracts.identity import InstrumentId, SeriesId
 from auqua.contracts.validation import (
+    require_decimals,
     require_non_negative,
     require_positive,
     require_positive_int,

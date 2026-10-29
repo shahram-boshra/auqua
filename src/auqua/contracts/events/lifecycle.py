@@ -10,10 +10,11 @@ from decimal import Decimal
 from enum import StrEnum
 
 from auqua.contracts.errors import InvalidFieldError, UpcastRefusedError
-from auqua.contracts.events.base import Event, require_decimals
+from auqua.contracts.events.base import Event
 from auqua.contracts.identity import InstrumentId
 from auqua.contracts.instruments import CURRENCY_CODE, Settlement
 from auqua.contracts.validation import (
+    require_decimals,
     require_match,
     require_non_negative,
     require_positive,
