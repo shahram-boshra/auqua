@@ -399,6 +399,24 @@ def test_portfolio_section_loads_exactly(roots: Roots) -> None:
     )
     assert margin.read_on == datetime.date(2026, 10, 28)
     assert portfolio.funding["DERIBIT:BTC-PERPETUAL"].rate_period_ns == 8 * 3_600 * 10**9
+    assert portfolio.futures == {}  # a schema-5 document without `futures` loads (a72)
+
+
+FUTURES = """
+[portfolio.futures."XCME:ES-202612"]
+time_zone = "America/Chicago"
+trading_day_end = 16:00:00
+source = "CME Globex notice 2018-04-20"
+read_on = 2026-10-29
+"""
+
+
+def test_futures_section_loads_its_trading_day(roots: Roots) -> None:
+    """A future's trading day: IANA zone and local end time, as TOML values (amendment 6)."""
+    text = CONFIG.format(env="paper").replace("= 1", "= 5") + PORTFOLIO + FUTURES
+    _write(roots.config / "paper" / "config.toml", text)
+    entry = _load(roots).config.portfolio.futures["XCME:ES-202612"]
+    assert (entry.time_zone, entry.trading_day_end) == ("America/Chicago", datetime.time(16))
 
 
 def _portfolio(**changes: Any) -> dict[str, Any]:  # noqa: ANN401 - test overrides

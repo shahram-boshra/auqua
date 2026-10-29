@@ -35,11 +35,16 @@ Effects per record, from the per-class modules:
 The view marks futures at their last settlement price (unrealized: the
 variation not yet settled), inverse perpetuals at the latest close (their
 unrealized P&L in the coin), equities, options and bonds at the latest close
-(market value minus the lots' exact cost). Spot pairs hold their base as a
-balance and are not listed as positions. Equity per currency (F-R) = cash +
-receivable + the market value of equities, options and bonds (a written
-option negative) + the unrealized P&L of futures and perpetuals; an unmarked
-position makes its currency's equity, margin and base total unavailable.
+(market value minus the lots' exact cost). Spot pairs are listed too
+(quantity = the base held, so decisions read quantity + working), but their
+value enters equity only as the converted base balance, never again through
+the position (amendment 7). Equity per currency (F-R) = cash + receivable +
+the market value of equities, options and bonds (a written option negative)
++ the unrealized P&L of futures and perpetuals. An unmarked position is
+listed in ``unmarked``: its currency's margin is incomplete and the base
+total unavailable. Margin scope (amendment 7): futures and perpetual swaps by
+their configured requirement; a written option is listed unmargined (no
+model); spot, equities, bonds and long options are outside margin scope.
 """
 
 import datetime
@@ -591,6 +596,8 @@ class Portfolio:
                 equity[balance.currency] = balance.cash + balance.receivable
         positions: list[PositionView] = []
         margined: list[tuple[AnyInstrument, Decimal, Decimal | None]] = []
+        written: list[InstrumentId] = []
+        unmarked: list[InstrumentId] = []
         working = self._working_by_instrument()
         for instrument_id in sorted(set(self._lots) | set(working), key=str):
             instrument = self._instruments.get(instrument_id) or self._reference.as_of(
@@ -598,14 +605,19 @@ class Portfolio:
             )
             if instrument is None:
                 raise PortfolioError(f"working order on {instrument_id}, which is not defined")
-            if isinstance(instrument, (CryptoSpot, FxPair)):
-                continue
             if self._quantity(instrument_id).is_zero() and instrument_id not in working:
                 continue
             row = self._position_view(instrument, working.get(instrument_id, Decimal(0)), as_of)
             positions.append(row.view)
-            if not row.view.quantity.is_zero():
-                margined.append((instrument, row.view.quantity, row.view.mark))
+            quantity = row.view.quantity
+            if isinstance(instrument, (CryptoSpot, FxPair)) or quantity.is_zero():
+                continue  # a spot pair's value is its base balance, never added twice
+            if row.view.mark is None:
+                unmarked.append(instrument_id)
+            if isinstance(instrument, (Future, PerpetualSwap)):
+                margined.append((instrument, quantity, row.view.mark))
+            elif isinstance(instrument, Option) and quantity < 0:
+                written.append(instrument_id)  # no margin model for written options
             _add(equity, row.view.currency, row.contribution)
         compared = dict(equity)
         for instrument, _, _ in margined:
@@ -614,6 +626,8 @@ class Portfolio:
                 compared.setdefault(entry.currency, Decimal(0))
         margin, unmargined = margin_rows(self._margin, margined, compared)
         conversions, unconverted, total = self._base_total(equity, as_of)
+        if unmarked:
+            total = None
         return AccountView(
             account_id=self._account,
             as_of_ns=as_of,
@@ -622,9 +636,10 @@ class Portfolio:
             balances=balances,
             positions=tuple(positions),
             margin=margin,
-            unmargined=unmargined,
+            unmargined=tuple(sorted((*unmargined, *written), key=str)),
             conversions=conversions,
             unconverted=unconverted,
+            unmarked=tuple(unmarked),
         )
 
     def _working_by_instrument(self) -> dict[InstrumentId, Decimal]:
@@ -719,8 +734,7 @@ class Portfolio:
         total = Decimal(0)
         for currency in sorted(equity):
             amount = equity[currency]
-            if amount is None:
-                unconverted.append(currency)
+            if amount is None:  # an unmarked position: listed in ``unmarked``
                 continue
             if currency == BASE_CURRENCY:
                 with exact():
@@ -733,7 +747,8 @@ class Portfolio:
             conversions.append(conversion)
             with exact():
                 total += conversion.value
-        return tuple(conversions), tuple(unconverted), None if unconverted else total
+        unavailable = bool(unconverted) or any(amount is None for amount in equity.values())
+        return tuple(conversions), tuple(unconverted), None if unavailable else total
 
 
 @dataclass(frozen=True)

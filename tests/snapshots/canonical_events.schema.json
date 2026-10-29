@@ -94,7 +94,7 @@
     },
     "AccountView": {
       "additionalProperties": false,
-      "description": "The account at ``as_of_ns`` as of ``log_position`` (BP6 section 4.8).\n\n``equity_base`` is the equity in :data:`BASE_CURRENCY`, or ``None`` when a\nconversion is unavailable; ``unconverted`` then lists the currencies\nwithout a rate. ``unmargined`` lists instruments with a position and no\nmargin entry: margin is incomplete while it is not empty (amendment 1).",
+      "description": "The account at ``as_of_ns`` as of ``log_position`` (BP6 section 4.8).\n\n``equity_base`` is the equity in :data:`BASE_CURRENCY`, or ``None`` when it\ncannot be computed: ``unconverted`` lists the currencies without a rate and\n``unmarked`` the positions without a mark whose value enters equity (BP6\namendment 7). ``unmargined`` lists positions in margin scope without a\nusable requirement: margin is incomplete while it is not empty (amendment 1).",
       "properties": {
         "account_id": {
           "type": "string"
@@ -152,6 +152,13 @@
           "type": "array"
         },
         "unmargined": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/InstrumentId"
+          },
+          "type": "array"
+        },
+        "unmarked": {
           "default": [],
           "items": {
             "$ref": "#/$defs/InstrumentId"
