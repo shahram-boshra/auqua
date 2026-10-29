@@ -27,8 +27,17 @@ from auqua.clock.log import LogClock
 from auqua.config.base import Environment
 from auqua.config.storage import StorageConfig
 from auqua.contracts.codec import encode
-from auqua.contracts.events import Bar, CorporateAction, InstrumentDefined, Quote, Trade
+from auqua.contracts.errors import UpcastRefusedError
+from auqua.contracts.events import (
+    Bar,
+    CorporateAction,
+    CorporateActionV2,
+    InstrumentDefined,
+    Quote,
+    Trade,
+)
 from auqua.contracts.events.base import Event, LogRecord
+from auqua.contracts.events.lifecycle import CorporateActionKind
 from auqua.contracts.identity import InstrumentId, new_id
 from auqua.contracts.instruments import CryptoSpot, Identifiers
 from auqua.storage.chain import GENESIS, record_hash
@@ -51,7 +60,7 @@ from auqua.storage.errors import (
     UnsupportedStoreVersionError,
     WriterLockedError,
 )
-from auqua.storage.eventlog import EventLog
+from auqua.storage.eventlog import CANONICAL_TYPES, EventLog
 from auqua.storage.files import PRIVATE_DIRECTORY, PRIVATE_FILE, write_private
 from auqua.storage.query import QuerySession
 from auqua.storage.reference import ReferenceIndex
@@ -171,6 +180,26 @@ def test_head_hash_is_an_independent_recomputation(log: EventLog, log_path: Path
         assert reader.verify() == head
         assert reader.head() == head
     assert record_hash(GENESIS, 0, encode(events[0])) == _independent_head(events[:1])
+
+
+def test_unconvertible_legacy_version_is_refused_with_its_sequence(log_path: Path) -> None:
+    """A stored v1 cash dividend cannot be upcast: replay names its sequence (BP6 C1)."""
+    legacy = CorporateAction(
+        id=new_id(),
+        source="ingest/test",
+        ts_event_ns=T0,
+        ts_ingest_ns=T0,
+        instrument_id=InstrumentId("XNAS", "AAPL"),
+        kind=CorporateActionKind.CASH_DIVIDEND,
+        effective_ns=T0,
+        cash_amount=Decimal("0.26"),
+        currency="USD",
+    )
+    types: frozenset[type[Event]] = frozenset({*CANONICAL_TYPES, CorporateAction})
+    with EventLog(log_path, ENV, busy_timeout_ms=TIMEOUT_MS, event_types=types) as log:
+        log.append([trade(0), legacy])
+    with _reader(log_path) as reader, pytest.raises(UpcastRefusedError, match="sequence 1: "):
+        list(reader.records())
 
 
 @pytest.mark.parametrize(
@@ -429,7 +458,7 @@ def test_dataset_schemas_of_market_events() -> None:
     for event_type in (Quote, Bar):
         types = {f.type for f in dataset_schema(event_type) if f.name not in {"id", "source"}}
         assert types <= {pa.int64(), DECIMAL_TYPE}
-    for refused in (InstrumentDefined, CorporateAction):
+    for refused in (InstrumentDefined, CorporateActionV2):
         with pytest.raises(SchemaMismatchError):
             dataset_schema(refused)
 

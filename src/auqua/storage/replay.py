@@ -21,7 +21,7 @@ import msgspec
 from auqua.clock.log import LogClock
 from auqua.config.base import Environment
 from auqua.contracts.codec import CANONICAL, EventCodec
-from auqua.contracts.errors import EventDecodeError
+from auqua.contracts.errors import EventDecodeError, UpcastRefusedError
 from auqua.contracts.events.base import Event, LogRecord
 from auqua.storage.chain import GENESIS, record_hash
 from auqua.storage.errors import LogCorruptionError
@@ -88,6 +88,7 @@ class EventLogReader:
 
         Raises:
             LogCorruptionError: the payload does not decode or disagrees with its columns.
+            UpcastRefusedError: a stored legacy version cannot be upcast.
         """
         row = self._connection.execute(
             "SELECT sequence, type, ts_event_ns, ts_ingest_ns, payload FROM log "
@@ -101,6 +102,8 @@ class EventLogReader:
         try:
             event = self._codec.decode(payload)
             stored_tag = _TAG_DECODER.decode(payload).type
+        except UpcastRefusedError as error:
+            raise UpcastRefusedError(f"{where}: {error}") from error
         except (EventDecodeError, msgspec.ValidationError) as error:
             raise LogCorruptionError(f"{where}: payload does not decode") from error
         if (stored_tag, event.source, event.id, event.ts_event_ns, event.ts_ingest_ns) != (
@@ -126,6 +129,8 @@ class EventLogReader:
         Raises:
             LogCorruptionError: gap, hash mismatch, undecodable payload or
                 inconsistent columns.
+            UpcastRefusedError: a stored legacy version cannot be upcast (named
+                with its sequence).
             ValueError: ``from_sequence`` is negative.
         """
         for record, _ in self._verified(from_sequence):
@@ -151,6 +156,8 @@ class EventLogReader:
             try:
                 event = self._codec.decode(payload)
                 stored_tag = _TAG_DECODER.decode(payload).type
+            except UpcastRefusedError as error:
+                raise UpcastRefusedError(f"{where}: {error}") from error
             except (EventDecodeError, msgspec.ValidationError) as error:
                 raise LogCorruptionError(f"{where}: payload does not decode") from error
             decoded = (

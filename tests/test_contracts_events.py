@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Asadollah Boshra
 # SPDX-License-Identifier: MIT
-"""Tests for canonical events and codecs (BP1 X1, X2, X3, X5, X11; ADR 0014)."""
+"""Tests for canonical events and codecs (BP1 X1, X2, X3, X5, X11; ADR 0014; BP6 section 4.1)."""
 
+import datetime
 import json
 import typing
 import uuid
@@ -15,13 +16,20 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from auqua.contracts.codec import CANONICAL, EventCodec, encode
-from auqua.contracts.errors import EventDecodeError, InvalidDecimalError, InvalidFieldError
+from auqua.contracts.errors import (
+    EventDecodeError,
+    InvalidDecimalError,
+    InvalidFieldError,
+    UpcastRefusedError,
+)
 from auqua.contracts.events import (
     Bar,
     CanonicalEvent,
     CorporateAction,
+    CorporateActionV2,
     CouponPayment,
     FundingPayment,
+    FundingPaymentV2,
     FuturesExpiry,
     FxSettlement,
     InstrumentDefined,
@@ -30,7 +38,17 @@ from auqua.contracts.events import (
     OptionExpiry,
     Quote,
     ReferenceRate,
+    SettlementPrice,
     Trade,
+)
+from auqua.contracts.events.account import (
+    AccountStatement,
+    CashTransfer,
+    Difference,
+    ReconciliationResult,
+    ReconciliationStatus,
+    StatementBalance,
+    StatementPosition,
 )
 from auqua.contracts.events.base import Event, LogRecord
 from auqua.contracts.events.ingest import (
@@ -136,12 +154,19 @@ def _examples() -> list[Event]:
             close=Decimal(11),
             volume=Decimal(5),
         ),
-        CorporateAction(
+        CorporateActionV2(
             **_common(new_id()),
             instrument_id=InstrumentId("XNAS", "AAPL"),
             kind=CorporateActionKind.SPLIT,
             effective_ns=T0 + HOUR_NS,
             ratio=Decimal(4),
+        ),
+        SettlementPrice(
+            **_common(new_id()),
+            instrument_id=InstrumentId("XCME", "ES-202612"),
+            trading_date=datetime.date(2025, 1, 1),
+            price=Decimal("6000.25"),
+            ts_published_ns=T0 + HOUR_NS,
         ),
         FuturesExpiry(
             **_common(new_id()),
@@ -171,11 +196,12 @@ def _examples() -> list[Event]:
             base_amount=Decimal(1000000),
             quote_amount=Decimal("1085000.00"),
         ),
-        FundingPayment(
+        FundingPaymentV2(
             **_common(new_id()),
             instrument_id=InstrumentId("BINANCE", "BTCUSDT-PERP"),
             funding_rate=Decimal("-0.0001"),
             mark_price=Decimal("93800.1"),
+            interval_ns=8 * HOUR_NS,
         ),
         CouponPayment(
             **_common(new_id()),
@@ -188,6 +214,28 @@ def _examples() -> list[Event]:
         *_trading_examples(),
         *_ingestion_examples(),
         *_research_examples(),
+        *_account_examples(),
+    ]
+
+
+def _account_examples() -> list[Event]:
+    """One instance of each BP6 account event type."""
+    return [
+        CashTransfer(**_common(new_id()), currency="USD", amount=Decimal(100000), reference="t-1"),
+        AccountStatement(
+            **_common(new_id()),
+            statement_id="s-1",
+            as_of_ns=T0,
+            balances=(StatementBalance("BTC", Decimal("0.5")), StatementBalance("USD", Decimal(1))),
+            positions=(StatementPosition(BTC, Decimal("0.5")),),
+        ),
+        ReconciliationResult(
+            **_common(new_id()),
+            statement_id="s-1",
+            statement_sha256="0" * 64,
+            status=ReconciliationStatus.BREAK,
+            differences=(Difference("balance:USD", Decimal(1), Decimal(2)),),
+        ),
     ]
 
 
@@ -468,6 +516,149 @@ def test_constructor_validates() -> None:
             kind=CorporateActionKind.CASH_DIVIDEND,
             effective_ns=T0,
             ratio=Decimal(2),
+        )
+
+
+# --- BP6 section 4.1: new versions and account events ------------------------------------------
+AAPL = InstrumentId("XNAS", "AAPL")
+DAY_NS = 24 * HOUR_NS
+
+
+def _dividend(**changes: Any) -> CorporateActionV2:  # noqa: ANN401 - test overrides
+    fields: dict[str, Any] = {
+        "instrument_id": AAPL,
+        "kind": CorporateActionKind.CASH_DIVIDEND,
+        "effective_ns": T0 + DAY_NS,
+        "cash_amount": Decimal("0.26"),
+        "currency": "USD",
+        "ex_date_ns": T0 + DAY_NS,
+        "record_date_ns": T0 + DAY_NS,
+        "pay_date_ns": T0 + 15 * DAY_NS,
+    } | changes
+    return CorporateActionV2(**_common(new_id()), **fields)
+
+
+def test_cash_dividend_needs_its_three_dates() -> None:
+    """v2 cash dividends carry ex, record and pay dates; other kinds may not (BP6 C1)."""
+    assert _dividend().pay_date_ns == T0 + 15 * DAY_NS
+    assert _dividend(pay_date_ns=T0).pay_date_ns == T0, "FINRA 11140(b)(2): pay may precede ex"
+    with pytest.raises(InvalidFieldError, match="ex, record and pay"):
+        _dividend(record_date_ns=None)
+    with pytest.raises(InvalidFieldError, match="effective_ns must equal ex_date_ns"):
+        _dividend(effective_ns=T0)
+    with pytest.raises(InvalidFieldError, match="forbids dividend dates"):
+        CorporateActionV2(
+            **_common(new_id()),
+            instrument_id=AAPL,
+            kind=CorporateActionKind.SPLIT,
+            effective_ns=T0,
+            ratio=Decimal(2),
+            ex_date_ns=T0,
+        )
+
+
+def test_corporate_action_v1_upcasts_except_cash_dividends() -> None:
+    """v1 non-dividend kinds upcast unchanged; a v1 cash dividend is refused with its sequence."""
+    split = CorporateAction(
+        **_common(new_id()),
+        instrument_id=AAPL,
+        kind=CorporateActionKind.SPLIT,
+        effective_ns=T0,
+        ratio=Decimal(4),
+    )
+    upcast = CANONICAL.decode(encode(split))
+    assert isinstance(upcast, CorporateActionV2)
+    assert (upcast.id, upcast.ratio, upcast.ex_date_ns) == (split.id, Decimal(4), None)
+    dividend = CorporateAction(
+        **_common(new_id()),
+        instrument_id=AAPL,
+        kind=CorporateActionKind.CASH_DIVIDEND,
+        effective_ns=T0,
+        cash_amount=Decimal("0.26"),
+        currency="USD",
+    )
+    with pytest.raises(UpcastRefusedError, match="no ex, record and pay dates"):
+        CANONICAL.decode(encode(dividend))
+    with pytest.raises(UpcastRefusedError, match="sequence 9: "):
+        CANONICAL.decode_record(encode(LogRecord(sequence=9, event=dividend)))
+
+
+def test_funding_payment_v1_is_refused_and_v2_validated() -> None:
+    """v1 has no period, so it is refused; v2 needs a positive period (BP6 D3, E2)."""
+    legacy = FundingPayment(
+        **_common(new_id()),
+        instrument_id=BTC,
+        funding_rate=Decimal("0.0005"),
+        mark_price=Decimal(10000),
+    )
+    with pytest.raises(UpcastRefusedError, match="no funding period"):
+        CANONICAL.decode(encode(legacy))
+    with pytest.raises(InvalidFieldError, match="interval_ns"):
+        FundingPaymentV2(
+            **_common(new_id()),
+            instrument_id=BTC,
+            funding_rate=Decimal("0.0005"),
+            mark_price=Decimal(10000),
+            interval_ns=0,
+        )
+    reported = FundingPaymentV2(
+        **_common(new_id()),
+        instrument_id=BTC,
+        funding_rate=Decimal("0.0005"),
+        mark_price=Decimal(10000),
+        interval_ns=8 * HOUR_NS,
+        amount=Decimal("-0.0005"),
+    )
+    assert CANONICAL.decode(encode(reported)) == reported
+
+
+def test_account_event_rules() -> None:
+    """Transfers are non-zero; statement rows are canonical; results are consistent."""
+    with pytest.raises(InvalidFieldError, match="zero"):
+        CashTransfer(**_common(new_id()), currency="USD", amount=Decimal(0), reference="t")
+    with pytest.raises(InvalidFieldError, match="trimmed"):
+        CashTransfer(**_common(new_id()), currency="USD", amount=Decimal(1), reference=" t")
+    usd, btc = StatementBalance("USD", Decimal(1)), StatementBalance("BTC", Decimal(1))
+    with pytest.raises(InvalidFieldError, match="increasing"):
+        AccountStatement(**_common(new_id()), statement_id="s", as_of_ns=T0, balances=(usd, btc))
+    with pytest.raises(InvalidFieldError, match="increasing"):
+        AccountStatement(**_common(new_id()), statement_id="s", as_of_ns=T0, balances=(usd, usd))
+    key: dict[str, Any] = {"statement_id": "s", "statement_sha256": "0" * 64}
+    with pytest.raises(InvalidFieldError, match="lists"):
+        ReconciliationResult(**_common(new_id()), **key, status=ReconciliationStatus.BREAK)
+    differs = (Difference("balance:USD", Decimal(1), None),)
+    with pytest.raises(InvalidFieldError, match="lists"):
+        ReconciliationResult(
+            **_common(new_id()), **key, status=ReconciliationStatus.MATCHED, differences=differs
+        )
+    with pytest.raises(InvalidFieldError, match="only a matched"):
+        ReconciliationResult(
+            **_common(new_id()),
+            **key,
+            status=ReconciliationStatus.BREAK,
+            differences=differs,
+            resolves=new_id(),
+        )
+    with pytest.raises(InvalidFieldError, match="do not differ"):
+        Difference("balance:USD", Decimal(1), Decimal("1.0"))
+    with pytest.raises(InvalidFieldError, match="hex"):
+        ReconciliationResult(
+            **_common(new_id()),
+            statement_id="s",
+            statement_sha256="X",
+            status=ReconciliationStatus.MATCHED,
+        )
+
+
+def test_settlement_price_is_published_after_its_event() -> None:
+    """A settlement price cannot be available before it happened (ADR 0028)."""
+    with pytest.raises(InvalidFieldError, match="ts_published_ns"):
+        SettlementPrice(
+            **_common(new_id()),
+            instrument_id=BTC,
+            trading_date=datetime.date(2025, 1, 1),
+            price=Decimal(1),
+            ts_published_ns=T0 - 1,
         )
 
 

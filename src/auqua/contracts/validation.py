@@ -39,3 +39,15 @@ def require_non_negative(value: Decimal, name: str) -> None:
     require_finite(value, name)
     if value < 0:
         raise InvalidFieldError(f"{name} must be >= 0, got {value}")
+
+
+def require_sha256(value: str, name: str) -> None:
+    """Refuse text that is not 64 lower-case hexadecimal digits."""
+    if len(value) != 64 or value.strip("0123456789abcdef"):  # noqa: PLR2004 - SHA-256 hex length
+        raise InvalidFieldError(f"{name} must be 64 lower-case hex digits")
+
+
+def require_label(value: str, name: str) -> None:
+    """Refuse empty text and text with leading or trailing whitespace."""
+    if not value.strip() or value != value.strip():
+        raise InvalidFieldError(f"{name} {value!r} must be non-empty and trimmed")

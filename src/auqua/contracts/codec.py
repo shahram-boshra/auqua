@@ -14,9 +14,15 @@ from typing import Any
 
 import msgspec
 
-from auqua.contracts.errors import EventDecodeError
+from auqua.contracts.errors import EventDecodeError, UpcastRefusedError
 from auqua.contracts.events import CanonicalEvent
 from auqua.contracts.events.base import Event, LogRecord
+from auqua.contracts.events.lifecycle import (
+    CorporateAction,
+    FundingPayment,
+    upcast_corporate_action,
+    upcast_funding_payment,
+)
 from auqua.contracts.events.research import upcast_run_started
 from auqua.contracts.events.trading import RunStarted
 
@@ -87,13 +93,17 @@ class EventCodec:
         """Decode one log record; its event is upcast to the current version.
 
         Raises:
-            EventDecodeError: as :meth:`decode`, or an invalid record envelope.
+            EventDecodeError: as :meth:`decode`, or an invalid record envelope;
+                :class:`UpcastRefusedError` names the record's sequence.
         """
         try:
             record: LogRecord[Event] = self._record_decoder.decode(data)
         except msgspec.ValidationError as error:
             raise EventDecodeError(str(error)) from error
-        event = self._upcast(record.event)
+        try:
+            event = self._upcast(record.event)
+        except UpcastRefusedError as error:
+            raise UpcastRefusedError(f"sequence {record.sequence}: {error}") from error
         return record if event is record.event else LogRecord(record.sequence, event)
 
     def json_schema(self) -> dict[str, Any]:
@@ -102,4 +112,11 @@ class EventCodec:
 
 
 #: Codec for :data:`auqua.contracts.events.CanonicalEvent`; legacy versions are upcast.
-CANONICAL = EventCodec(CanonicalEvent.__args__, {RunStarted: upcast_run_started})
+CANONICAL = EventCodec(
+    CanonicalEvent.__args__,
+    {
+        RunStarted: upcast_run_started,
+        CorporateAction: upcast_corporate_action,
+        FundingPayment: upcast_funding_payment,
+    },
+)

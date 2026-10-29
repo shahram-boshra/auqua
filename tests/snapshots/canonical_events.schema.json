@@ -1,5 +1,60 @@
 {
   "$defs": {
+    "AccountStatement": {
+      "additionalProperties": false,
+      "description": "Balances and positions of the account as the venue reports them at ``as_of_ns``.",
+      "properties": {
+        "as_of_ns": {
+          "type": "integer"
+        },
+        "balances": {
+          "items": {
+            "$ref": "#/$defs/StatementBalance"
+          },
+          "type": "array"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "positions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/StatementPosition"
+          },
+          "type": "array"
+        },
+        "source": {
+          "type": "string"
+        },
+        "statement_id": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "account.statement.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "statement_id",
+        "as_of_ns",
+        "balances"
+      ],
+      "title": "AccountStatement",
+      "type": "object"
+    },
     "Aggressor": {
       "description": "Side that initiated a trade, when the venue reports it.",
       "enum": [
@@ -191,6 +246,52 @@
       "title": "Bond",
       "type": "object"
     },
+    "CashTransfer": {
+      "additionalProperties": false,
+      "description": "Deposit (positive ``amount``) or withdrawal (negative) of one currency.",
+      "properties": {
+        "amount": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "reference": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "account.transfer.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "currency",
+        "amount",
+        "reference"
+      ],
+      "title": "CashTransfer",
+      "type": "object"
+    },
     "ChecksumResult": {
       "description": "Outcome of the provider checksum check.",
       "enum": [
@@ -200,9 +301,20 @@
       ],
       "title": "ChecksumResult"
     },
-    "CorporateAction": {
+    "CorporateActionKind": {
+      "description": "Corporate actions handled in phase 1.",
+      "enum": [
+        "cash_dividend",
+        "delisting",
+        "split",
+        "stock_dividend",
+        "symbol_change"
+      ],
+      "title": "CorporateActionKind"
+    },
+    "CorporateActionV2": {
       "additionalProperties": false,
-      "description": "Corporate action.\n\nCDM reference: ``reset`` / ``split`` / ``termsChange``; intent\n``CorporateActionAdjustment``. ``ts_event_ns`` is the announcement;\n``effective_ns`` is when it applies. ``ratio`` is new units per old unit\n(split: 2 for 2-for-1; reverse split: 0.5; stock dividend: additional units\nper unit held).",
+      "description": "Corporate action with the three dates of a cash dividend (BP6 C1).\n\nAs version 1, plus ``ex_date_ns``, ``record_date_ns`` and ``pay_date_ns``:\neach the start of that date in the listing venue's time zone, as UTC\nnanoseconds, set by the producer. They are required for a cash dividend and\nforbidden for the other kinds. Entitlement is fixed at the ex-date (a\npurchase on or after it does not receive the dividend), so for a cash\ndividend ``effective_ns`` equals ``ex_date_ns``; for the other kinds\n``effective_ns`` keeps its version-1 meaning. The dates are not ordered\nhere: for a distribution of 25 percent or more the ex-date follows the\npayable date (FINRA Rule 11140(b)(2)).",
       "properties": {
         "cash_amount": {
           "anyOf": [
@@ -230,6 +342,17 @@
         "effective_ns": {
           "type": "integer"
         },
+        "ex_date_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "id": {
           "format": "uuid",
           "type": "string"
@@ -251,11 +374,33 @@
           ],
           "default": null
         },
+        "pay_date_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "ratio": {
           "anyOf": [
             {
               "format": "decimal",
               "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "record_date_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
             },
             {
               "type": "null"
@@ -274,7 +419,7 @@
         },
         "type": {
           "enum": [
-            "lifecycle.corporate_action.v1"
+            "lifecycle.corporate_action.v2"
           ]
         }
       },
@@ -288,19 +433,8 @@
         "kind",
         "effective_ns"
       ],
-      "title": "CorporateAction",
+      "title": "CorporateActionV2",
       "type": "object"
-    },
-    "CorporateActionKind": {
-      "description": "Corporate actions handled in phase 1.",
-      "enum": [
-        "cash_dividend",
-        "delisting",
-        "split",
-        "stock_dividend",
-        "symbol_change"
-      ],
-      "title": "CorporateActionKind"
     },
     "CouponPayment": {
       "additionalProperties": false,
@@ -478,6 +612,44 @@
       ],
       "title": "DayCount"
     },
+    "Difference": {
+      "additionalProperties": false,
+      "description": "One field whose value differs; ``None`` means absent on that side.",
+      "properties": {
+        "expected": {
+          "anyOf": [
+            {
+              "format": "decimal",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "field": {
+          "type": "string"
+        },
+        "reported": {
+          "anyOf": [
+            {
+              "format": "decimal",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "field",
+        "expected",
+        "reported"
+      ],
+      "title": "Difference",
+      "type": "object"
+    },
     "Equity": {
       "additionalProperties": false,
       "description": "Share or exchange-traded fund (``is_fund``).",
@@ -606,10 +778,22 @@
       "title": "Fill",
       "type": "object"
     },
-    "FundingPayment": {
+    "FundingPaymentV2": {
       "additionalProperties": false,
-      "description": "Perpetual-swap funding at ``ts_event_ns`` (CDM: ``transfer``; intent ``CashFlow``).\n\nPositive ``funding_rate``: longs pay shorts.",
+      "description": "Perpetual-swap funding for the period ``interval_ns`` ending at ``ts_event_ns`` (BP6 D3).\n\nPositive ``funding_rate``: longs pay shorts. ``amount``, when present, is\nthe payment the venue reports, signed (positive = received) and in the\ninstrument's settlement currency; it is posted as reported (BP6 E2).",
       "properties": {
+        "amount": {
+          "anyOf": [
+            {
+              "format": "decimal",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "funding_rate": {
           "format": "decimal",
           "type": "string"
@@ -620,6 +804,9 @@
         },
         "instrument_id": {
           "$ref": "#/$defs/InstrumentId"
+        },
+        "interval_ns": {
+          "type": "integer"
         },
         "mark_price": {
           "format": "decimal",
@@ -636,7 +823,7 @@
         },
         "type": {
           "enum": [
-            "lifecycle.funding_payment.v1"
+            "lifecycle.funding_payment.v2"
           ]
         }
       },
@@ -648,9 +835,10 @@
         "ts_ingest_ns",
         "instrument_id",
         "funding_rate",
-        "mark_price"
+        "mark_price",
+        "interval_ns"
       ],
-      "title": "FundingPayment",
+      "title": "FundingPaymentV2",
       "type": "object"
     },
     "Future": {
@@ -1664,6 +1852,78 @@
       "title": "Quote",
       "type": "object"
     },
+    "ReconciliationResult": {
+      "additionalProperties": false,
+      "description": "Result of reconciling one statement (BP6 section 4.7).\n\n``resolves`` names the id of an earlier ``break`` result that this\n``matched`` result closes.",
+      "properties": {
+        "differences": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Difference"
+          },
+          "type": "array"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resolves": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "type": "string"
+        },
+        "statement_id": {
+          "type": "string"
+        },
+        "statement_sha256": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ReconciliationStatus"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "portfolio.reconciliation.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "statement_id",
+        "statement_sha256",
+        "status"
+      ],
+      "title": "ReconciliationResult",
+      "type": "object"
+    },
+    "ReconciliationStatus": {
+      "description": "Outcome of comparing a statement with the account.",
+      "enum": [
+        "break",
+        "matched"
+      ],
+      "title": "ReconciliationStatus"
+    },
     "ReferenceRate": {
       "additionalProperties": false,
       "description": "One published observation of a reference series (BP4 section 4.4).\n\n``ts_event_ns`` is the observation time stated by the publisher (e.g. noon\nin New York for the H.10 rates); ``ts_published_ns`` is when the value\nbecame available (required: every reference source states or implies a\npublication time). ``unit`` states the quote convention as published, e.g.\n``USD per EUR`` or ``percent``; the value keeps the published digits.",
@@ -1987,6 +2247,61 @@
       ],
       "title": "Settlement"
     },
+    "SettlementPrice": {
+      "additionalProperties": false,
+      "description": "Official daily settlement price of a future for one trading date (BP6 section 4.1).\n\n``ts_published_ns`` is when the exchange published it: its availability\nfor point-in-time use (ADR 0028).",
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "price": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "revision": {
+          "default": 0,
+          "type": "integer"
+        },
+        "source": {
+          "type": "string"
+        },
+        "trading_date": {
+          "format": "date",
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "ts_published_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "market.settlement_price.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "instrument_id",
+        "trading_date",
+        "price",
+        "ts_published_ns"
+      ],
+      "title": "SettlementPrice",
+      "type": "object"
+    },
     "Side": {
       "description": "Order or fill side.",
       "enum": [
@@ -2047,6 +2362,44 @@
         "provider_version"
       ],
       "title": "Signal",
+      "type": "object"
+    },
+    "StatementBalance": {
+      "additionalProperties": false,
+      "description": "One currency's balance as the venue reports it.",
+      "properties": {
+        "amount": {
+          "format": "decimal",
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount"
+      ],
+      "title": "StatementBalance",
+      "type": "object"
+    },
+    "StatementPosition": {
+      "additionalProperties": false,
+      "description": "One instrument's signed position as the venue reports it.",
+      "properties": {
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "quantity": {
+          "format": "decimal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "instrument_id",
+        "quantity"
+      ],
+      "title": "StatementPosition",
       "type": "object"
     },
     "Target": {
@@ -2241,10 +2594,16 @@
   },
   "anyOf": [
     {
+      "$ref": "#/$defs/AccountStatement"
+    },
+    {
       "$ref": "#/$defs/Bar"
     },
     {
-      "$ref": "#/$defs/CorporateAction"
+      "$ref": "#/$defs/CashTransfer"
+    },
+    {
+      "$ref": "#/$defs/CorporateActionV2"
     },
     {
       "$ref": "#/$defs/CouponPayment"
@@ -2256,7 +2615,7 @@
       "$ref": "#/$defs/Fill"
     },
     {
-      "$ref": "#/$defs/FundingPayment"
+      "$ref": "#/$defs/FundingPaymentV2"
     },
     {
       "$ref": "#/$defs/FuturesExpiry"
@@ -2286,6 +2645,9 @@
       "$ref": "#/$defs/Quote"
     },
     {
+      "$ref": "#/$defs/ReconciliationResult"
+    },
+    {
       "$ref": "#/$defs/ReferenceRate"
     },
     {
@@ -2293,6 +2655,9 @@
     },
     {
       "$ref": "#/$defs/RunStartedV2"
+    },
+    {
+      "$ref": "#/$defs/SettlementPrice"
     },
     {
       "$ref": "#/$defs/Signal"
@@ -2309,13 +2674,15 @@
   ],
   "discriminator": {
     "mapping": {
+      "account.statement.v1": "#/$defs/AccountStatement",
+      "account.transfer.v1": "#/$defs/CashTransfer",
       "alpha.signal.v1": "#/$defs/Signal",
       "data.gap.v1": "#/$defs/DataGap",
       "execution.fill.v1": "#/$defs/Fill",
       "ingest.run.v1": "#/$defs/IngestRun",
-      "lifecycle.corporate_action.v1": "#/$defs/CorporateAction",
+      "lifecycle.corporate_action.v2": "#/$defs/CorporateActionV2",
       "lifecycle.coupon_payment.v1": "#/$defs/CouponPayment",
-      "lifecycle.funding_payment.v1": "#/$defs/FundingPayment",
+      "lifecycle.funding_payment.v2": "#/$defs/FundingPaymentV2",
       "lifecycle.futures_expiry.v1": "#/$defs/FuturesExpiry",
       "lifecycle.fx_settlement.v1": "#/$defs/FxSettlement",
       "lifecycle.option_assignment.v1": "#/$defs/OptionAssignment",
@@ -2324,8 +2691,10 @@
       "market.bar.v1": "#/$defs/Bar",
       "market.quote.v1": "#/$defs/Quote",
       "market.reference_rate.v1": "#/$defs/ReferenceRate",
+      "market.settlement_price.v1": "#/$defs/SettlementPrice",
       "market.trade.v1": "#/$defs/Trade",
       "order.submitted.v1": "#/$defs/OrderSubmitted",
+      "portfolio.reconciliation.v1": "#/$defs/ReconciliationResult",
       "portfolio.target.v1": "#/$defs/Target",
       "reference.instrument.v1": "#/$defs/InstrumentDefined",
       "research.run.v2": "#/$defs/RunStartedV2",

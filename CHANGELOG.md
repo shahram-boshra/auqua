@@ -73,7 +73,13 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   input record count, the report hash and check statuses (ADRs 0030-0032).
   Event types `research.run.v2` (upcast from v1) and `research.trial.v1`.
 - Portfolio and capital (BP6, in progress): `numeric.divide` rounds an exact
-  quotient once, through the same rounding path as `numeric.quantize`.
+  quotient once, through the same rounding path as `numeric.quantize`. Event
+  types `account.transfer.v1`, `account.statement.v1`,
+  `portfolio.reconciliation.v1`, `market.settlement_price.v1`,
+  `lifecycle.corporate_action.v2` (ex, record and pay dates of a cash dividend)
+  and `lifecycle.funding_payment.v2` (funding period, venue-reported amount);
+  a stored version 1 that cannot be upcast (a cash dividend, any funding
+  payment) is refused with its log sequence, never guessed.
 
 ### Changed
 

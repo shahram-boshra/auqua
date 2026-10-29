@@ -23,16 +23,10 @@ from auqua.contracts.errors import InvalidFieldError
 from auqua.contracts.events.base import Event
 from auqua.contracts.events.trading import RunStarted
 from auqua.contracts.identity import InstrumentId
-from auqua.contracts.validation import require_match, require_time_ns
+from auqua.contracts.validation import require_match, require_sha256, require_time_ns
 
-_SHA256_HEX = 64
 #: Hypothesis ids: lower-case slugs, e.g. ``ma-crossover-btc``.
 _SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
-
-
-def _require_sha(value: str, name: str) -> None:
-    if len(value) != _SHA256_HEX or value.strip("0123456789abcdef"):
-        raise InvalidFieldError(f"{name} must be 64 lower-case hex digits")
 
 
 class PeriodName(StrEnum):
@@ -77,7 +71,7 @@ class InputRef(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 
     def __post_init__(self) -> None:
         """Validate the digest and the counts."""
-        _require_sha(self.runs_sha256, "runs_sha256")
+        require_sha256(self.runs_sha256, "runs_sha256")
         if min(self.runs, self.bars, self.gaps) < 0:
             raise InvalidFieldError("counts must be >= 0")
 
@@ -119,9 +113,9 @@ class RunStartedV2(Event, frozen=True, tag="research.run.v2"):
             "risk_limits_sha256",
             "code_id",
         ):
-            _require_sha(getattr(self, name), name)
+            require_sha256(getattr(self, name), name)
         if self.uv_lock_sha256 is not None:
-            _require_sha(self.uv_lock_sha256, "uv_lock_sha256")
+            require_sha256(self.uv_lock_sha256, "uv_lock_sha256")
         if self.hypothesis_id is not None:
             require_match(self.hypothesis_id, _SLUG_PATTERN, "hypothesis_id")
         if self.input_next_sequence < 0:
@@ -167,8 +161,8 @@ class Trial(Event, frozen=True, tag="research.trial.v1"):
         """Validate the ids, hashes and counts."""
         super().__post_init__()
         require_match(self.hypothesis_id, _SLUG_PATTERN, "hypothesis_id")
-        _require_sha(self.config_hash, "config_hash")
-        _require_sha(self.returns_sha256, "returns_sha256")
+        require_sha256(self.config_hash, "config_hash")
+        require_sha256(self.returns_sha256, "returns_sha256")
         if self.observations < 2:  # noqa: PLR2004 - a Sharpe ratio needs two returns
             raise InvalidFieldError("observations must be >= 2")
         if not self.sharpe.is_finite():
