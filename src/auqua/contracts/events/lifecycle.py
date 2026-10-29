@@ -6,6 +6,7 @@ Each type names its CDM reference (primitive instruction and intent). These are
 instrument-level facts; their effect on positions and cash is computed by BP6.
 """
 
+import uuid
 from decimal import Decimal
 from enum import StrEnum
 
@@ -220,13 +221,20 @@ class OptionExpiry(Event, frozen=True, tag="lifecycle.option_expiry.v1"):
         require_decimals(underlying_price=self.underlying_price)
 
 
-class FxSettlement(Event, frozen=True, tag="lifecycle.fx_settlement.v1"):
-    """Exchange of the two currency amounts on the value date (CDM: ``transfer``)."""
+class FxSettlement(Event, frozen=True, tag="lifecycle.fx_settlement.v1", omit_defaults=True):
+    """Exchange of the two currency amounts on the value date (CDM: ``transfer``).
+
+    ``causation_id`` is the id of the fill being settled, when the source
+    gives it: the common trade reference that avoids cross-matching (BP6
+    amendment 3). Added within version 1 under Rule W: absent, it is not
+    encoded, so stored events keep their bytes.
+    """
 
     instrument_id: InstrumentId
     value_date_ns: int
     base_amount: Decimal
     quote_amount: Decimal
+    causation_id: uuid.UUID | None = None
 
     def __post_init__(self) -> None:
         """Validate the value date and amounts."""

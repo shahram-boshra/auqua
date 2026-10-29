@@ -13,7 +13,9 @@ A notional fraction applies to the notional ``|quantity| x multiplier x
 mark`` in the instrument's quote currency, so the entry's currency must be
 that currency. An inverse perpetual's notional is in USD while its margin is
 held in the coin, and converting it is a division: its requirement is
-unavailable in phase 1.
+unavailable in phase 1 (amendment 3, F-J). A venue schedule whose rate grows
+with the position size is not a constant fraction; configured as one, it
+understates large positions, so the requirement is not exact (BP6 R12).
 """
 
 from collections import defaultdict

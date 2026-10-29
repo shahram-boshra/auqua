@@ -767,10 +767,16 @@ PRE_RULE_W = (
     b'"source":"ingest/test","ts_event_ns":1735689600000000000,'
     b'"ts_ingest_ns":1735689600000000001,"instrument_id":{"venue":"CBOE","symbol":"SPX-C5000"},'
     b'"quantity":"1"}',
+    b'{"type":"lifecycle.fx_settlement.v1","id":"00000000-0000-0000-0000-000000000005",'
+    b'"source":"ingest/test","ts_event_ns":1735689600000000000,'
+    b'"ts_ingest_ns":1735689600000000001,"instrument_id":{"venue":"DUKASCOPY","symbol":"EURUSD"},'
+    b'"value_date_ns":1735862400000000000,"base_amount":"1000000","quote_amount":"1085000.00"}',
 )
 
 
-@pytest.mark.parametrize("payload", PRE_RULE_W, ids=["fill", "exercise", "assignment"])
+@pytest.mark.parametrize(
+    "payload", PRE_RULE_W, ids=["fill", "exercise", "assignment", "fx_settlement"]
+)
 def test_rule_w_keeps_stored_payloads_byte_identical(payload: bytes) -> None:
     """A stored event without the new field decodes and re-encodes to the same bytes."""
     event = CANONICAL.decode(payload)
@@ -789,5 +795,10 @@ def test_rule_w_fields_round_trip_when_present() -> None:
         CANONICAL.decode(PRE_RULE_W[1]), exercise_settlement_value=Decimal("5100.25")
     )
     assert CANONICAL.decode(encode(exercise)) == exercise
+    settlement = msgspec.structs.replace(
+        CANONICAL.decode(PRE_RULE_W[3]), causation_id=uuid.UUID(int=6)
+    )
+    assert b'"causation_id":"00000000-0000-0000-0000-000000000006"' in encode(settlement)
+    assert CANONICAL.decode(encode(settlement)) == settlement
     with pytest.raises(InvalidDecimalError):
         msgspec.structs.replace(fill, accrued_interest=Decimal("NaN"))

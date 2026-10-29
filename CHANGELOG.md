@@ -110,7 +110,12 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   funding posted as reported, or computed only for a position sized in the
   settlement currency. Margin requirements per contract or as a fraction of
   notional from the configured values, exact; a position without a usable
-  requirement is reported as unmargined, never as zero.
+  requirement is reported as unmargined, never as zero. BP6 amendment 3: an FX
+  settlement may name the fill it settles (`causation_id`, added within
+  version 1 without changing stored bytes) and is matched by that reference,
+  else by its amounts before the value date; a difference, no candidate, or
+  candidates on both sides is a break, never a guess. Funding without a
+  reported amount is refused in phase 1.
 
 ### Changed
 
