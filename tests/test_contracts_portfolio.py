@@ -122,6 +122,12 @@ def test_account_view_completeness_markers() -> None:
         _view(equity_base=None)
     with pytest.raises(InvalidFieldError, match="unconverted"):
         _view(unconverted=("EUR",))
+    unmarked = _view(equity_base=None, unmarked=(BTC,))  # amendment 7
+    assert (unmarked.equity_base, unmarked.unconverted) == (None, ())
+    with pytest.raises(InvalidFieldError, match="unmarked"):
+        _view(unmarked=(BTC,))
+    with pytest.raises(InvalidFieldError, match="increasing"):
+        _view(equity_base=None, unmarked=(ETH, BTC))
     assert not _view(
         positions=(PositionView(BTC, "USD", Decimal(1)),), unmargined=(BTC,)
     ).margin_complete

@@ -213,10 +213,11 @@ class Conversion(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 class AccountView(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     """The account at ``as_of_ns`` as of ``log_position`` (BP6 section 4.8).
 
-    ``equity_base`` is the equity in :data:`BASE_CURRENCY`, or ``None`` when a
-    conversion is unavailable; ``unconverted`` then lists the currencies
-    without a rate. ``unmargined`` lists instruments with a position and no
-    margin entry: margin is incomplete while it is not empty (amendment 1).
+    ``equity_base`` is the equity in :data:`BASE_CURRENCY`, or ``None`` when it
+    cannot be computed: ``unconverted`` lists the currencies without a rate and
+    ``unmarked`` the positions without a mark whose value enters equity (BP6
+    amendment 7). ``unmargined`` lists positions in margin scope without a
+    usable requirement: margin is incomplete while it is not empty (amendment 1).
     """
 
     account_id: str
@@ -229,6 +230,7 @@ class AccountView(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     unmargined: tuple[InstrumentId, ...] = ()
     conversions: tuple[Conversion, ...] = ()
     unconverted: tuple[str, ...] = ()
+    unmarked: tuple[InstrumentId, ...] = ()
 
     def __post_init__(self) -> None:
         """Validate the time, the row order and the completeness markers."""
@@ -241,13 +243,15 @@ class AccountView(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
         _require_increasing([str(i) for i in self.unmargined], "unmargined")
         _require_increasing([c.from_currency for c in self.conversions], "conversions")
         _require_increasing(list(self.unconverted), "unconverted")
+        _require_increasing([str(i) for i in self.unmarked], "unmarked")
         for code in self.unconverted:
             require_match(code, CURRENCY_CODE, "unconverted")
         if any(c.to_currency != BASE_CURRENCY for c in self.conversions):
             raise InvalidFieldError(f"conversions must be into {BASE_CURRENCY}")
-        if (self.equity_base is None) != bool(self.unconverted):
+        if (self.equity_base is None) != bool(self.unconverted or self.unmarked):
             raise InvalidFieldError(
-                "equity_base is unavailable exactly when a currency is unconverted"
+                "equity_base is unavailable exactly when a currency is unconverted "
+                "or a position unmarked"
             )
 
     @property

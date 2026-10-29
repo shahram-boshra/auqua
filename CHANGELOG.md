@@ -145,7 +145,11 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   the log and checked when read back. The account view marks each position,
   reports unrealized P&L per class, equity per currency, margin and the USD
   total, unavailable when a position is unmarked or a rate is missing.
-  Configuration: a `futures` entry per future.
+  Configuration: a `futures` entry per future. BP6 amendment 7: spot pairs
+  are listed as positions (the base held), their value counted once through
+  the base balance; the account view lists unmarked positions apart from
+  unconverted currencies; margin covers futures and perpetual swaps, a written
+  option is reported unmargined.
 
 ### Changed
 

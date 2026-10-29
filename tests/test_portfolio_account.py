@@ -37,10 +37,13 @@ from auqua.contracts.instruments import (
     AnyInstrument,
     CryptoSpot,
     Equity,
+    ExerciseStyle,
     Future,
     FxDelivery,
     FxPair,
     Identifiers,
+    Option,
+    OptionRight,
     PerpetualSwap,
     PerpetualType,
     Settlement,
@@ -346,7 +349,15 @@ def test_view_marks_working_equity_and_margin() -> None:
     portfolio, _ = _fold(_scenario())
     view = portfolio.view()
     rows = {str(p.instrument_id): p for p in view.positions}
-    assert set(rows) == {str(AAPL), str(ES)}  # spot pairs hold their base as balances
+    assert set(rows) == {str(AAPL), str(ES), str(BTC_USD), str(EUR_USD)}  # amendment 7
+    btc = rows[str(BTC_USD)]
+    assert (btc.quantity, btc.currency, btc.mark) == (Decimal("0.5"), "USD", Decimal(61000))
+    assert btc.unrealized == Decimal(500)  # 0.5 x (61,000 - 60,000)
+    eur = rows[str(EUR_USD)]
+    assert (eur.quantity, eur.mark) == (Decimal(1000000), None)  # no bar: unmarked
+    assert view.unmarked == ()  # a spot pair's value is its base balance
+    assert view.unmargined == ()  # equities and spot are outside margin scope
+    assert view.margin_complete
     aapl = rows[str(AAPL)]
     assert (aapl.quantity, aapl.working, aapl.mark) == (Decimal(60), Decimal(40), Decimal(210))
     assert aapl.unrealized == Decimal(60) * Decimal(10)
@@ -519,3 +530,47 @@ def test_symbol_change_moves_the_lots() -> None:
     (row,) = portfolio.view().positions
     assert (row.instrument_id, row.quantity, row.unrealized) == (renamed, Decimal(10), Decimal(10))
     assert portfolio.lots(AAPL) is None
+
+
+def test_unmarked_position_and_written_option() -> None:
+    """An unmarked equity: listed, its currency's margin incomplete, no base total (a72)."""
+    head = [
+        InstrumentDefined(**_common(i + 1, ct(25, 0)), instrument=INSTRUMENTS[i]) for i in (0, 1)
+    ]
+    events = [
+        *head,
+        CashTransfer(**_common(9, ct(25, 1)), currency="USD", amount=Decimal(10000), reference="t"),
+        _fill(30, AAPL, Side.BUY, "10", "10.00", ct(26, 9)),
+        _fill(31, ES, Side.BUY, "1", "4000.00", ct(26, 10)),
+        _settlement(32, 26, "4001.00"),
+    ]
+    view = _fold(events)[0].view()
+    assert view.unmarked == (AAPL,)
+    assert (view.equity_base, view.unconverted) == (None, ())
+    assert view.unmargined == (ES,)  # USD equity unavailable: margin incomplete
+    assert view.margin == ()
+    option = Option(
+        id=InstrumentId("OCC", "AAPL-C200"),
+        quote_currency="USD",
+        price_increment=CENT,
+        quantity_increment=Decimal(1),
+        multiplier=Decimal(100),
+        underlying="AAPL",
+        right=OptionRight.CALL,
+        strike=Decimal(200),
+        expiry_ns=ct(31, 15),
+        exercise_style=ExerciseStyle.AMERICAN,
+        settlement=Settlement.PHYSICAL,
+        **_identifiers(),
+    )
+    written = [
+        InstrumentDefined(**_common(5, ct(25, 0)), instrument=option),
+        CashTransfer(**_common(9, ct(25, 1)), currency="USD", amount=Decimal(10000), reference="t"),
+        _fill(40, option.id, Side.SELL, "1", "2.50", ct(26, 9)),
+        _bar(41, option.id, "2.00", ct(26, 10)),
+    ]
+    view = _fold(written)[0].view()
+    (row,) = view.positions
+    assert (row.quantity, row.unrealized) == (Decimal(-1), Decimal(50))  # 250 received, 200 owed
+    assert view.unmargined == (option.id,)  # no margin model for written options
+    assert view.equity_base == Decimal(10000) + Decimal(250) - Decimal(200)
