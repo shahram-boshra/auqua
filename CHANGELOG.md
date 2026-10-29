@@ -84,7 +84,10 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   receivables, positions with filled and working quantities kept apart,
   margin, base-currency conversions, explicit "unavailable" markers) and the
   `portfolio.snapshot.v1` event; `numeric.exact` runs arithmetic that must not
-  round.
+  round. Configuration schema version 5 adds the `portfolio` section: account
+  id, base currency USD, and the operator's currencies, USD rate sources, margin
+  requirements and funding-rate periods, each with its source and the date it
+  was read; a version-4 file migrates with an empty section.
 
 ### Changed
 
