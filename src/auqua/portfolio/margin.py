@@ -78,13 +78,16 @@ class PerInstrumentMargin:
 def margin_rows(
     model: PerInstrumentMargin,
     positions: Sequence[tuple[Instrument, Decimal, Decimal | None]],
-    equity: Mapping[str, Decimal],
+    equity: Mapping[str, Decimal | None],
 ) -> tuple[tuple[MarginView, ...], tuple[InstrumentId, ...]]:
     """Margin per currency and the unmargined instruments, both in increasing key order.
 
     ``positions`` are (instrument, signed quantity, mark); flat positions need
     no margin. ``equity`` is the equity per currency the requirements are
-    compared with.
+    compared with; ``None`` marks it unavailable (a position in that currency
+    is unmarked), and the instruments margined in that currency are then
+    reported as unmargined: margin incomplete, never compared with a partial
+    equity (BP6 amendment 6, F-R).
 
     Raises:
         PortfolioError: no equity is given for a currency with a requirement.
@@ -99,22 +102,28 @@ def margin_rows(
         if required is None:
             unmargined.append(instrument.id)
             continue
+        if required.currency not in equity:
+            raise PortfolioError(f"no equity in {required.currency} to compare with its margin")
+        if equity[required.currency] is None:
+            unmargined.append(instrument.id)
+            continue
         with exact():
             initial[required.currency] += required.initial
             maintenance[required.currency] += required.maintenance
     rows = []
     for currency in sorted(initial):
-        if currency not in equity:
-            raise PortfolioError(f"no equity in {currency} to compare with its margin")
+        available = equity[currency]
+        if available is None:  # pragma: no cover - such requirements were not summed
+            continue
         with exact():
             rows.append(
                 MarginView(
                     currency=currency,
                     initial=initial[currency],
                     maintenance=maintenance[currency],
-                    equity=equity[currency],
-                    available=equity[currency] - initial[currency],
-                    deficit=max(Decimal(0), maintenance[currency] - equity[currency]),
+                    equity=available,
+                    available=available - initial[currency],
+                    deficit=max(Decimal(0), maintenance[currency] - available),
                 )
             )
     return tuple(rows), tuple(sorted(unmargined, key=str))

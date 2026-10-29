@@ -11,6 +11,7 @@ reports it as unavailable, never as zero.
 """
 
 import datetime
+import zoneinfo
 from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Literal, Self
@@ -128,6 +129,43 @@ class FundingEntry(ConfigModel):
     read_on: ReadOn
 
 
+class FuturesEntry(ConfigModel):
+    """The trading day of one future (BP6 amendment 6, F-N).
+
+    A fill belongs to the settlement of trading date D when it falls after the
+    end of the previously settled trading date and at or before the end of D;
+    the end of D is ``trading_day_end`` on D in ``time_zone``.
+
+    Attributes:
+        time_zone: IANA time-zone name of the venue's trading day (e.g. ``America/Chicago``).
+        trading_day_end: Local time at which a trading date ends.
+        source: The published document the values were read from.
+        read_on: The date they were read.
+    """
+
+    time_zone: Label
+    trading_day_end: Annotated[datetime.time, Field(strict=False)]
+    source: Label
+    read_on: ReadOn
+
+    @field_validator("time_zone")
+    @classmethod
+    def _known_zone(cls, value: str) -> str:
+        try:
+            zoneinfo.ZoneInfo(value)
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError) as error:
+            raise ValueError(f"unknown time zone {value!r}") from error
+        return value
+
+    def end_ns(self, trading_date: datetime.date) -> int:
+        """The end of ``trading_date`` as UTC nanoseconds since the epoch."""
+        local = datetime.datetime.combine(
+            trading_date, self.trading_day_end, tzinfo=zoneinfo.ZoneInfo(self.time_zone)
+        )
+        delta = local - datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC)
+        return (delta.days * 86_400 + delta.seconds) * 10**9 + delta.microseconds * 1_000
+
+
 class PortfolioConfig(ConfigModel):
     """The account's base currency, currencies, rate sources, margin and funding.
 
@@ -138,6 +176,8 @@ class PortfolioConfig(ConfigModel):
         rates: Currency code → source of its USD rate.
         margin: Instrument ``VENUE:SYMBOL`` → requirement.
         funding: Perpetual ``VENUE:SYMBOL`` → funding-rate period.
+        futures: Future ``VENUE:SYMBOL`` → trading day (amendment 6); a future
+            without an entry is refused by the account fold.
     """
 
     account_id: Label = "primary"
@@ -146,8 +186,9 @@ class PortfolioConfig(ConfigModel):
     rates: dict[str, RateSource] = Field(default_factory=dict)
     margin: dict[str, MarginEntry] = Field(default_factory=dict)
     funding: dict[str, FundingEntry] = Field(default_factory=dict)
+    futures: dict[str, FuturesEntry] = Field(default_factory=dict)
 
-    @field_validator("margin", "funding")
+    @field_validator("margin", "funding", "futures")
     @classmethod
     def _instrument_keys(cls, value: dict[str, object]) -> dict[str, object]:
         for key in value:

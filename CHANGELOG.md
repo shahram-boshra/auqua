@@ -137,6 +137,15 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   unmatched, ambiguous); its id is derived from the settlement, so a repeat
   is a log duplicate and changed content a conflict. A statement balance is
   cash, excluding accruals.
+  The account fold (BP6 amendment 6): every record applied in log order on
+  the log clock, deterministic on replay; fills by asset class, futures
+  settled by configured trading days (time zone and day end), dividends,
+  splits and symbol changes at their dates, working orders from accepted
+  risk decisions, derived FX breaks and reconciliation results returned for
+  the log and checked when read back. The account view marks each position,
+  reports unrealized P&L per class, equity per currency, margin and the USD
+  total, unavailable when a position is unmarked or a rate is missing.
+  Configuration: a `futures` entry per future.
 
 ### Changed
 
