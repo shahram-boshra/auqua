@@ -193,10 +193,18 @@ PRE_RULE_W_STORED = (
     b'"source":"ingest/test","ts_event_ns":1735689600000000000,'
     b'"ts_ingest_ns":1735689600000000001,"instrument_id":{"venue":"DUKASCOPY","symbol":"EURUSD"},'
     b'"value_date_ns":1735862400000000000,"base_amount":"1000000","quote_amount":"1085000.00"}',
+    b'{"type":"reference.instrument.v1","id":"00000000-0000-0000-0000-000000000007",'
+    b'"source":"ingest/test","ts_event_ns":1735689600000000000,'
+    b'"ts_ingest_ns":1735689600000000001,"instrument":{"type":"instrument.option.v1",'
+    b'"id":{"venue":"OCC","symbol":"XYZ-C50"},"quote_currency":"USD","price_increment":"0.01",'
+    b'"quantity_increment":"1","multiplier":"100","valid_from_ns":0,"knowledge_ns":0,'
+    b'"identifiers":{"figi":null,"isin":null,"cfi":null,"dti":null},"underlying":"XYZ",'
+    b'"right":"call","strike":"50","expiry_ns":1767225600000000000,"exercise_style":"american",'
+    b'"settlement":"physical"}}',
 )
 
 
-@pytest.mark.parametrize("stored", PRE_RULE_W_STORED, ids=["fill", "fx_settlement"])
+@pytest.mark.parametrize("stored", PRE_RULE_W_STORED, ids=["fill", "fx_settlement", "option"])
 def test_pre_rule_w_payload_reappends_as_a_duplicate(log_path: Path, stored: bytes) -> None:
     """Stored before its Rule W field, an event re-appends as a duplicate: same bytes."""
     event = CANONICAL.decode(stored)

@@ -7,9 +7,14 @@ Pure functions for the account fold.
 - **Trade:** the notional is price x multiplier x quantity at the clean price
   (the quote convention lives in the instrument's multiplier). The fill's
   ``accrued_interest`` — what the buyer pays the seller, as the venue reports
-  it — is required for a bond with ``coupon_rate > 0`` (a zero-coupon bond is
-  exempt) and posted as ``accrued``: the buyer negative, the seller positive;
-  it never enters a lot's cost and is never recomputed.
+  it — is required for a bond with ``coupon_rate > 0`` and refused on a
+  zero-coupon bond, which does "not pay interest during the life of the
+  bonds" (investor.gov; amendment 4). It is posted as ``accrued``: the buyer
+  negative, the seller positive; it never enters a lot's cost and is never
+  recomputed. The account view does not compute accrued interest to the view
+  date in phase 1: a Treasury's interest payment dates are "specified in the
+  auction announcement" (31 CFR 356.30(a)), not carried by the instrument
+  (amendment 4, F-L; BP6 R13).
 - **Coupon** = ``amount_per_unit`` x units held, in the event's currency.
 """
 
@@ -28,8 +33,8 @@ def bond_fill_postings(fill: Fill, bond: Bond, account: str) -> tuple[Posting, .
     """The clean notional (``trade``), the reported accrued interest (``accrued``) and the fee.
 
     Raises:
-        PortfolioError: another instrument, or no ``accrued_interest`` on a
-            bond with a coupon.
+        PortfolioError: another instrument, no ``accrued_interest`` on a bond
+            with a coupon, or one on a zero-coupon bond.
     """
     if fill.instrument_id != bond.id:
         raise PortfolioError(f"fill for {fill.instrument_id}, instrument {bond.id}")
@@ -37,6 +42,10 @@ def bond_fill_postings(fill: Fill, bond: Bond, account: str) -> tuple[Posting, .
         raise PortfolioError(
             f"fill of {bond.id} (coupon {bond.coupon_rate}) without accrued_interest "
             "(BP6 amendment 2, F-E2)"
+        )
+    if bond.coupon_rate.is_zero() and fill.accrued_interest is not None:
+        raise PortfolioError(
+            f"fill of zero-coupon {bond.id} with accrued_interest (BP6 amendment 4)"
         )
     with exact():
         notional = -(fill.price * bond.multiplier * signed_quantity(fill))
