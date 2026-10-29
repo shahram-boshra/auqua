@@ -127,6 +127,11 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   changing stored bytes); a physical exercise or assignment needs it, in effect
   at the event as known at the decision time; a zero-coupon fill with accrued
   interest is refused.
+  Reconciliation of venue statements with the account view: cash balances and
+  positions compared exactly, each difference listed; one result per statement
+  (keyed by its id and the SHA-256 of its canonical encoding), a re-sent
+  statement with other content refused, and a break open until a later
+  matched result resolves it.
 
 ### Changed
 
