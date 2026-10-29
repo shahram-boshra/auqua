@@ -10,7 +10,8 @@ import msgspec
 import pytest
 
 from auqua.config.portfolio import PortfolioConfig
-from auqua.contracts.events.lifecycle import FundingPaymentV2, FuturesExpiry
+from auqua.contracts.events.account import Difference
+from auqua.contracts.events.lifecycle import FundingPaymentV2, FuturesExpiry, FxSettlement
 from auqua.contracts.events.trading import Fill, Side
 from auqua.contracts.identity import InstrumentId
 from auqua.contracts.instruments import (
@@ -26,6 +27,8 @@ from auqua.contracts.instruments import (
 )
 from auqua.contracts.portfolio import Posting, PostingKind
 from auqua.portfolio.effects import (
+    FxBreak,
+    PendingFx,
     contract_value,
     fee_posting,
     funding_amount,
@@ -33,6 +36,8 @@ from auqua.portfolio.effects import (
     futures_variation,
     increment,
     inverse_pnl,
+    match_fx_settlement,
+    pending_fx,
     require_cash_settled_expiry,
     spot_fill_postings,
 )
@@ -268,6 +273,82 @@ def test_spot_refusals() -> None:
         spot_fill_postings(_fill(EUR_USD, Side.BUY, "1", "1"), _crypto(), ACCOUNT, Decimal(0))
 
 
+# --- T8 (settlement): matching an FX settlement to one pending fill (amendment 3) ----------------
+DAY = 24 * HOUR
+
+
+def _fx_fill(fill_id: int, side: Side, at_ns: int, quantity: str = "1000000") -> Fill:
+    fill = _fill(EUR_USD, side, quantity, "1.0850")
+    return msgspec.structs.replace(fill, id=uuid.UUID(int=fill_id), ts_event_ns=at_ns)
+
+
+def _settlement(
+    base: str = "1000000", quote: str = "1085000.0000", reference: int | None = None
+) -> FxSettlement:
+    return FxSettlement(
+        id=uuid.UUID(int=99),
+        source="ingest/test",
+        ts_event_ns=2 * DAY,
+        ts_ingest_ns=2 * DAY,
+        instrument_id=EUR_USD,
+        value_date_ns=2 * DAY,
+        base_amount=Decimal(base),
+        quote_amount=Decimal(quote),
+        causation_id=None if reference is None else uuid.UUID(int=reference),
+    )
+
+
+def _pending(*fills: Fill) -> list[PendingFx]:
+    return [pending_fx(fill, _fx()) for fill in fills]
+
+
+def test_fx_settlement_matches_its_referenced_fill() -> None:
+    """A trade reference selects that fill only, even when an older one has equal amounts."""
+    pending = _pending(_fx_fill(1, Side.BUY, HOUR), _fx_fill(2, Side.BUY, 2 * HOUR))
+    match = match_fx_settlement(_settlement(reference=2), pending)
+    assert (match.matched, match.fill_id) == (True, uuid.UUID(int=2))
+    assert match_fx_settlement(_settlement(reference=3), pending).reason is FxBreak.UNMATCHED
+
+
+def test_fx_settlement_matches_the_oldest_economic_candidate() -> None:
+    """Without a reference: equal amounts, executed before the value date, the oldest first."""
+    pending = _pending(
+        _fx_fill(1, Side.BUY, HOUR, quantity="500000"),
+        _fx_fill(2, Side.BUY, 2 * HOUR),
+        _fx_fill(3, Side.BUY, 3 * HOUR),
+        _fx_fill(4, Side.BUY, 2 * DAY),
+    )
+    match = match_fx_settlement(_settlement(), pending)
+    assert (match.matched, match.fill_id, match.differences) == (True, uuid.UUID(int=2), ())
+    late = _pending(_fx_fill(4, Side.BUY, 2 * DAY))
+    assert match_fx_settlement(_settlement(), late).reason is FxBreak.UNMATCHED
+
+
+def test_fx_settlement_amount_break_lists_the_differences() -> None:
+    """The referenced fill exchanges other amounts: a break with expected and reported values."""
+    pending = _pending(_fx_fill(1, Side.BUY, HOUR))
+    match = match_fx_settlement(_settlement(quote="1084999.0000", reference=1), pending)
+    assert (match.matched, match.reason, match.fill_id) == (
+        False,
+        FxBreak.AMOUNTS,
+        uuid.UUID(int=1),
+    )
+    assert match.differences == (
+        Difference("quote_amount", Decimal("1085000.0000"), Decimal("1084999.0000")),
+    )
+    assert match_fx_settlement(_settlement(quote="1084999.0000"), pending).reason is (
+        FxBreak.UNMATCHED
+    )
+
+
+def test_fx_settlement_with_candidates_on_both_sides_is_ambiguous() -> None:
+    """A buy and a sell of equal amounts: the event carries no direction, so no guess."""
+    pending = _pending(_fx_fill(1, Side.BUY, HOUR), _fx_fill(2, Side.SELL, 2 * HOUR))
+    match = match_fx_settlement(_settlement(), pending)
+    assert (match.matched, match.reason, match.fill_id) == (False, FxBreak.AMBIGUOUS, None)
+    assert match_fx_settlement(_settlement(reference=2), pending).matched
+
+
 # --- T9: Deribit inverse P&L ---------------------------------------------------------------------
 @pytest.mark.parametrize(
     ("notional", "exit_price", "pnl"),
@@ -310,49 +391,40 @@ def _funding(interval_ns: int, amount: Decimal | None = None) -> FundingPaymentV
 FUNDING_CONFIG = {"funding": {str(INVERSE): {"rate_period_ns": 8 * HOUR, **_READ}}}
 
 
-def test_funding_reproduces_deribit() -> None:
-    """Long 1 BTC at 0.05 %: 8 h → pays 0.0005 BTC; 1 min → 0.00000104 BTC; shorts receive."""
-    assert funding_amount(Decimal("0.0005"), Decimal(1), 8 * HOUR, 8 * HOUR, SATOSHI) == Decimal(
-        "-0.0005"
-    )
-    minute = 60 * 10**9
-    assert funding_amount(Decimal("0.0005"), Decimal(1), minute, 8 * HOUR, SATOSHI) == Decimal(
-        "-0.00000104"
-    )
-    assert funding_amount(Decimal("0.0005"), Decimal(-1), minute, 8 * HOUR, SATOSHI) == Decimal(
-        "0.00000104"
-    )
+def test_funding_formula_reproduces_deribit() -> None:
+    """Long 1 BTC at 0.05 %: 8 h → pays 0.0005 BTC; 1 min → 0.00000104 BTC; shorts receive.
+
+    The formula as printed, with the rate period and increment from the fixture's
+    configuration; phase 1's fold does not call it (amendment 3, F-H).
+    """
     config = _config(**FUNDING_CONFIG)
-    swap = _swap(PerpetualType.INVERSE)
-    posting = funding_posting(_funding(8 * HOUR), swap, config, settlement_size=Decimal(1))
-    assert posting == Posting(
-        ACCOUNT, "BTC", Decimal("-0.00050000"), PostingKind.FUNDING, uuid.UUID(int=13)
-    )
+    period = config.funding[str(INVERSE)].rate_period_ns
+    btc = increment(config, "BTC")
+    rate = Decimal("0.0005")
+    assert funding_amount(rate, Decimal(1), 8 * HOUR, period, btc) == Decimal("-0.0005")
+    minute = 60 * 10**9
+    assert funding_amount(rate, Decimal(1), minute, period, btc) == Decimal("-0.00000104")
+    assert funding_amount(rate, Decimal(-1), minute, period, btc) == Decimal("0.00000104")
 
 
 def test_reported_funding_is_posted_as_reported() -> None:
     """A reported amount is posted unchanged, never recomputed (E2)."""
     reported = Decimal("-0.00049999")
     swap = _swap(PerpetualType.INVERSE)
-    posting = funding_posting(_funding(8 * HOUR, reported), swap, _config(), settlement_size=None)
-    assert posting is not None
-    assert posting.amount == reported
-    assert (
-        funding_posting(_funding(HOUR, Decimal(0)), swap, _config(), settlement_size=None) is None
-    )
+    posting = funding_posting(_funding(8 * HOUR, reported), swap, ACCOUNT)
+    assert posting == Posting(ACCOUNT, "BTC", reported, PostingKind.FUNDING, uuid.UUID(int=13))
+    assert funding_posting(_funding(HOUR, Decimal(0)), swap, ACCOUNT) is None
 
 
-def test_funding_refusals() -> None:
-    """No amount: refused for a USD-sized position (R10 (c)) and a linear swap (R1)."""
-    inverse = _swap(PerpetualType.INVERSE)
+def test_funding_without_an_amount_is_refused() -> None:
+    """No amount: refused for inverse and linear swaps alike (amendment 3; R10 (c), R1)."""
     with pytest.raises(PortfolioError, match="R10"):
-        funding_posting(_funding(HOUR), inverse, _config(**FUNDING_CONFIG), settlement_size=None)
-    linear = _swap(PerpetualType.LINEAR)
+        funding_posting(_funding(HOUR), _swap(PerpetualType.INVERSE), ACCOUNT)
     event = msgspec.structs.replace(_funding(HOUR), instrument_id=LINEAR)
     with pytest.raises(PortfolioError, match="R1"):
-        funding_posting(event, linear, _config(), settlement_size=Decimal(1))
-    with pytest.raises(ConfigurationError, match="rate period"):
-        funding_posting(_funding(HOUR), inverse, _config(), settlement_size=Decimal(1))
+        funding_posting(event, _swap(PerpetualType.LINEAR), ACCOUNT)
+    with pytest.raises(PortfolioError, match="instrument"):
+        funding_posting(event, _swap(PerpetualType.INVERSE), ACCOUNT)
     with pytest.raises(ConfigurationError, match="XRP"):
         increment(_config(), "XRP")
 

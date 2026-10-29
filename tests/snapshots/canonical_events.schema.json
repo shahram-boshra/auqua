@@ -1297,11 +1297,23 @@
     },
     "FxSettlement": {
       "additionalProperties": false,
-      "description": "Exchange of the two currency amounts on the value date (CDM: ``transfer``).",
+      "description": "Exchange of the two currency amounts on the value date (CDM: ``transfer``).\n\n``causation_id`` is the id of the fill being settled, when the source\ngives it: the common trade reference that avoids cross-matching (BP6\namendment 3). Added within version 1 under Rule W: absent, it is not\nencoded, so stored events keep their bytes.",
       "properties": {
         "base_amount": {
           "format": "decimal",
           "type": "string"
+        },
+        "causation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "id": {
           "format": "uuid",

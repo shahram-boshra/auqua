@@ -17,29 +17,39 @@ Pure functions: they read no clock and no store, and return amounts or
   price; physical delivery is refused (BP6 R3).
 - **Spot pairs (D, E).** A fill posts ``+base`` and ``-quote`` (a buy) or the
   reverse (a sell) on the trade date, and its fee in its fee currency. Spot is
-  long or flat in phase 1 (BP6 section 4.2). FX forwards are refused.
+  long or flat in phase 1 (BP6 section 4.2). FX forwards are refused. An FX
+  settlement is matched to one pending fill (BP6 amendment 3, after T2S
+  matching practice, NBB-SSS Annex 21): by its trade reference
+  (``causation_id``) when present, else by its economic fields; a difference,
+  no candidate, or candidates on both sides is a break, never a guess.
 - **Inverse perpetuals (E).** Profit in coin = USD notional x (1/entry -
   1/exit), one rational rounded once (``HALF_EVEN``, BP6 D1). Funding (Deribit,
   *Inverse Perpetual*): "Funding Payment = Funding Rate * Position Size * Time
   Fraction", "Time Fraction = Funding Rate Time Period / 8 hours"; positive
   rate: longs pay. A reported amount is posted as reported (BP6 E2); without
-  one, funding is computed only for a position whose size is given in the
-  settlement currency (R10 (c)), and refused for a linear perpetual (R1).
+  one, funding is refused in phase 1 (amendment 3, F-H): Deribit's "Position
+  Size" is the size in the settlement currency, which needs a price for both
+  inverse and linear positions (R10 (c), R1). :func:`funding_amount` is the
+  formula as printed, tested and not used by the fold.
 """
 
+import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from decimal import Decimal
+from enum import StrEnum
 
 from auqua.config.portfolio import PortfolioConfig
-from auqua.contracts.events.lifecycle import FundingPaymentV2, FuturesExpiry
+from auqua.contracts.events.account import Difference
+from auqua.contracts.events.lifecycle import FundingPaymentV2, FuturesExpiry, FxSettlement
 from auqua.contracts.events.trading import Fill, Side
+from auqua.contracts.identity import InstrumentId
 from auqua.contracts.instruments import (
     CryptoSpot,
     Future,
     FxDelivery,
     FxPair,
     PerpetualSwap,
-    PerpetualType,
     Settlement,
 )
 from auqua.contracts.numeric import Rounding, divide, exact, quantize
@@ -151,6 +161,97 @@ def spot_fill_postings(
     return tuple(postings)
 
 
+@dataclass(frozen=True)
+class PendingFx:
+    """An FX spot fill not yet settled: its side and the two amounts it exchanges."""
+
+    fill_id: uuid.UUID
+    instrument_id: InstrumentId
+    side: Side
+    base_amount: Decimal
+    quote_amount: Decimal
+    ts_event_ns: int
+
+
+def pending_fx(fill: Fill, pair: FxPair) -> PendingFx:
+    """The settlement a spot fill awaits (amounts positive, as an ``FxSettlement`` carries them).
+
+    Raises:
+        PortfolioError: as :func:`spot_fill_postings` for the instrument terms.
+    """
+    if fill.instrument_id != pair.id:
+        raise PortfolioError(f"fill for {fill.instrument_id}, instrument {pair.id}")
+    if pair.delivery is not FxDelivery.SPOT or pair.multiplier != 1:
+        raise PortfolioError(f"{pair.id}: only spot with multiplier 1 is supported")
+    with exact():
+        quote = fill.price * fill.quantity
+    return PendingFx(fill.id, pair.id, fill.side, fill.quantity, quote, fill.ts_event_ns)
+
+
+class FxBreak(StrEnum):
+    """Why an FX settlement matched no pending fill."""
+
+    AMOUNTS = "amounts"
+    UNMATCHED = "unmatched"
+    AMBIGUOUS = "ambiguous"
+
+
+@dataclass(frozen=True)
+class FxMatch:
+    """The outcome for one settlement: the fill it settles, or the break and its differences."""
+
+    settlement_id: uuid.UUID
+    fill_id: uuid.UUID | None
+    reason: FxBreak | None = None
+    differences: tuple[Difference, ...] = ()
+
+    @property
+    def matched(self) -> bool:
+        """``True`` when the settlement settles :attr:`fill_id` exactly."""
+        return self.reason is None
+
+
+def _amount_differences(settlement: FxSettlement, fill: PendingFx) -> tuple[Difference, ...]:
+    pairs = (
+        ("base_amount", fill.base_amount, settlement.base_amount),
+        ("quote_amount", fill.quote_amount, settlement.quote_amount),
+    )
+    return tuple(Difference(name, mine, theirs) for name, mine, theirs in pairs if mine != theirs)
+
+
+def match_fx_settlement(settlement: FxSettlement, pending: Sequence[PendingFx]) -> FxMatch:
+    """Match ``settlement`` to one of the ``pending`` fills, given in log order (amendment 3).
+
+    With a trade reference (``causation_id``) only that fill is a candidate:
+    absent, the settlement is unmatched; other amounts, an amount break.
+    Without one, candidates are the fills of the instrument with equal amounts
+    executed before the value date: none → unmatched; buys and sells among
+    them → ambiguous (the event carries no direction); else the oldest
+    (earliest ``ts_event_ns``, then log order).
+    """
+    fills = [p for p in pending if p.instrument_id == settlement.instrument_id]
+    if settlement.causation_id is not None:
+        referenced = [p for p in fills if p.fill_id == settlement.causation_id]
+        if not referenced:
+            return FxMatch(settlement.id, None, FxBreak.UNMATCHED)
+        (fill,) = referenced
+        differences = _amount_differences(settlement, fill)
+        if differences:
+            return FxMatch(settlement.id, fill.fill_id, FxBreak.AMOUNTS, differences)
+        return FxMatch(settlement.id, fill.fill_id)
+    candidates = [
+        p
+        for p in fills
+        if p.ts_event_ns < settlement.value_date_ns and not _amount_differences(settlement, p)
+    ]
+    if not candidates:
+        return FxMatch(settlement.id, None, FxBreak.UNMATCHED)
+    if len({p.side for p in candidates}) > 1:
+        return FxMatch(settlement.id, None, FxBreak.AMBIGUOUS)
+    oldest = min(candidates, key=lambda p: p.ts_event_ns)  # the first in log order on a tie
+    return FxMatch(settlement.id, oldest.fill_id)
+
+
 # --- E: perpetuals ---------------------------------------------------------------------------
 def inverse_pnl(
     notional: Decimal, entry: Decimal, exit_price: Decimal, coin_increment: Decimal
@@ -183,51 +284,23 @@ def funding_amount(
     return divide(numerator, Decimal(period_ns), money_increment, Rounding.HALF_EVEN)
 
 
-def funding_posting(
-    event: FundingPaymentV2,
-    swap: PerpetualSwap,
-    config: PortfolioConfig,
-    *,
-    settlement_size: Decimal | None,
-) -> Posting | None:
-    """The funding posting in the settlement currency; ``None`` when the amount is zero.
+def funding_posting(event: FundingPaymentV2, swap: PerpetualSwap, account: str) -> Posting | None:
+    """The reported funding in the settlement currency; ``None`` when it is zero.
 
-    A reported ``amount`` is posted as reported, never recomputed (BP6 E2).
-    Without one, the payment is computed from ``settlement_size`` (the signed
-    position size in the settlement currency) and the configured rate period.
+    The ``amount`` is posted as reported, never recomputed (BP6 E2). Phase 1
+    computes no funding (amendment 3, F-H): without an amount the event is
+    refused, for inverse and linear swaps alike (R10 (c), R1).
 
     Raises:
-        PortfolioError: the event is for another instrument; no amount is
-            reported and the position has no size in the settlement currency
-            (R10 (c)) or the swap is linear (R1).
-        ConfigurationError: the rate period or the settlement currency is not configured.
+        PortfolioError: the event is for another instrument, or reports no amount.
     """
     if event.instrument_id != swap.id:
         raise PortfolioError(f"funding of {event.instrument_id}, instrument {swap.id}")
-    account = config.account_id
-    if event.amount is not None:
-        if event.amount.is_zero():
-            return None
-        return Posting(
-            account, swap.settlement_currency, event.amount, PostingKind.FUNDING, event.id
-        )
-    if swap.contract_type is PerpetualType.LINEAR:
-        raise PortfolioError(f"funding of linear {swap.id} without a reported amount (BP6 R1)")
-    if settlement_size is None:
+    if event.amount is None:
         raise PortfolioError(
-            f"funding of {swap.id} without a reported amount on a position not sized in "
-            f"{swap.settlement_currency} (BP6 R10 (c))"
+            f"funding of {swap.id} without a reported amount is not computed in phase 1 "
+            "(BP6 R10 (c), R1)"
         )
-    entry = config.funding.get(str(swap.id))
-    if entry is None:
-        raise ConfigurationError(f"no funding rate period configured for {swap.id}")
-    amount = funding_amount(
-        event.funding_rate,
-        settlement_size,
-        event.interval_ns,
-        entry.rate_period_ns,
-        increment(config, swap.settlement_currency),
-    )
-    if amount.is_zero():
+    if event.amount.is_zero():
         return None
-    return Posting(account, swap.settlement_currency, amount, PostingKind.FUNDING, event.id)
+    return Posting(account, swap.settlement_currency, event.amount, PostingKind.FUNDING, event.id)
