@@ -121,6 +121,11 @@ class Reconciler:
             self._open[result.id] = result
 
     @property
+    def results(self) -> tuple[ReconciliationResult, ...]:
+        """Every recorded result, in the order applied (replaying them restores the state)."""
+        return tuple(self._by_statement.values())
+
+    @property
     def open_breaks(self) -> tuple[ReconciliationResult, ...]:
         """Breaks not yet resolved, oldest first."""
         return tuple(self._open.values())

@@ -120,7 +120,7 @@ from auqua.portfolio.effects import (
 )
 from auqua.portfolio.errors import CorporateActionLateError, PortfolioError
 from auqua.portfolio.ledger import Ledger
-from auqua.portfolio.lots import Lots
+from auqua.portfolio.lots import Lot, Lots
 from auqua.portfolio.margin import PerInstrumentMargin, margin_rows
 from auqua.portfolio.options import exercise_effect, premium_postings
 from auqua.portfolio.reconcile import SOURCE as DERIVED_SOURCE
@@ -145,8 +145,8 @@ class _FutureState:
     trades: list[tuple[int, Decimal, Decimal]] = field(default_factory=list)
 
 
-@dataclass
-class _Scheduled:
+@dataclass(frozen=True)
+class Scheduled:
     """A corporate action waiting for its time: a dividend's ex or pay date, or ``effective_ns``."""
 
     at_ns: int
@@ -156,11 +156,65 @@ class _Scheduled:
     entitled: Decimal = Decimal(0)
 
 
+@dataclass(frozen=True)
+class FutureRecord:
+    """A future's settlement state, as saved in the projection."""
+
+    instrument_id: InstrumentId
+    settled_quantity: Decimal
+    last_date: datetime.date | None
+    last_price: Decimal | None
+    last_available_ns: int | None
+    trades: tuple[tuple[int, Decimal, Decimal], ...]
+
+
+@dataclass(frozen=True)
+class LotsRecord:
+    """One instrument's lots, as saved in the projection."""
+
+    instrument_id: InstrumentId
+    increment: Decimal
+    direction: int
+    lots: tuple[Lot, ...]
+
+
+@dataclass(frozen=True)
+class PortfolioState:
+    """Every piece of fold state (BP6 amendment 6, F-Q): what the projection stores.
+
+    Two folds of the same log to the same position have equal states (T19).
+    """
+
+    clock_ns: int
+    log_position: LogPosition
+    order: int
+    postings: tuple[Posting, ...]
+    lots: tuple[LotsRecord, ...]
+    futures: tuple[FutureRecord, ...]
+    submitted: tuple[OrderSubmitted, ...]
+    working: tuple[tuple[uuid.UUID, InstrumentId, Decimal], ...]
+    pending_fx: tuple[PendingFx, ...]
+    scheduled: tuple[Scheduled, ...]
+    delisted: tuple[InstrumentId, ...]
+    results: tuple[ReconciliationResult, ...]
+    derived: tuple[Event, ...]
+
+
 class Portfolio:
     """The account of ``config.account_id``, folded from log records."""
 
-    def __init__(self, config: PortfolioConfig, market: MarketView) -> None:
+    def __init__(
+        self,
+        config: PortfolioConfig,
+        market: MarketView,
+        reference: ReferenceIndex | None = None,
+    ) -> None:
         """Start an empty account; ``market`` supplies point-in-time bars and rates.
+
+        ``reference`` holds the instrument versions already in the log before
+        the first record this fold applies (a resumed fold; amendment 8, F-T);
+        the fold adds the versions it reads. Versions are always looked up as
+        known at the fold's clock.
 
         Raises:
             ConfigurationError: USD is not among the configured currencies.
@@ -170,21 +224,89 @@ class Portfolio:
         self._account = config.account_id
         self._clock = LogClock()
         self._ledger = Ledger(config.account_id)
-        self._reference = ReferenceIndex()
+        self._reference = ReferenceIndex() if reference is None else reference
         self._valuation = Valuation(config, market, self._reference)
         self._margin = PerInstrumentMargin(config)
         self._lots: dict[InstrumentId, Lots] = {}
-        self._instruments: dict[InstrumentId, AnyInstrument] = {}
         self._futures: dict[InstrumentId, _FutureState] = {}
         self._submitted: dict[uuid.UUID, OrderSubmitted] = {}
         self._working: dict[uuid.UUID, tuple[InstrumentId, Decimal]] = {}
         self._pending_fx: list[PendingFx] = []
-        self._scheduled: list[_Scheduled] = []
+        self._scheduled: list[Scheduled] = []
         self._delisted: set[InstrumentId] = set()
         self._reconciler = Reconciler()
         self._derived: dict[uuid.UUID, Event] = {}
         self._position = LogPosition(next_sequence=0, hash=GENESIS.hex())
         self._order = 0
+
+    # --- state ---------------------------------------------------------------------------------
+    def state(self) -> PortfolioState:
+        """The complete fold state, in a canonical order."""
+        return PortfolioState(
+            clock_ns=self._clock.now_ns(),
+            log_position=self._position,
+            order=self._order,
+            postings=self._ledger.postings,
+            lots=tuple(
+                LotsRecord(i, lots.increment, lots.direction, lots.lots())
+                for i, lots in sorted(self._lots.items(), key=lambda item: str(item[0]))
+            ),
+            futures=tuple(
+                FutureRecord(
+                    i,
+                    f.settled_quantity,
+                    f.last_date,
+                    f.last_price,
+                    f.last_available_ns,
+                    tuple(f.trades),
+                )
+                for i, f in sorted(self._futures.items(), key=lambda item: str(item[0]))
+            ),
+            submitted=tuple(self._submitted.values()),
+            working=tuple((o, i, q) for o, (i, q) in self._working.items()),
+            pending_fx=tuple(self._pending_fx),
+            scheduled=tuple(self._scheduled),
+            delisted=tuple(sorted(self._delisted, key=str)),
+            results=self._reconciler.results,
+            derived=tuple(self._derived.values()),
+        )
+
+    @classmethod
+    def restore(
+        cls,
+        config: PortfolioConfig,
+        market: MarketView,
+        reference: ReferenceIndex,
+        state: PortfolioState,
+    ) -> Portfolio:
+        """A fold that continues from ``state`` (a validated projection; amendment 8).
+
+        Raises:
+            PortfolioError: the state is inconsistent (its postings, lots or
+                results do not replay).
+        """
+        portfolio = cls(config, market, reference)
+        portfolio._clock = LogClock(state.clock_ns)
+        portfolio._position = state.log_position
+        portfolio._order = state.order
+        portfolio._ledger = Ledger.from_postings(config.account_id, state.postings)
+        portfolio._lots = {
+            r.instrument_id: Lots.restore(r.increment, r.direction, r.lots) for r in state.lots
+        }
+        portfolio._futures = {
+            r.instrument_id: _FutureState(
+                r.settled_quantity, r.last_date, r.last_price, r.last_available_ns, list(r.trades)
+            )
+            for r in state.futures
+        }
+        portfolio._submitted = {order.id: order for order in state.submitted}
+        portfolio._working = {o: (i, q) for o, i, q in state.working}
+        portfolio._pending_fx = list(state.pending_fx)
+        portfolio._scheduled = list(state.scheduled)
+        portfolio._delisted = set(state.delisted)
+        portfolio._reconciler = Reconciler(state.results)
+        portfolio._derived = {event.id: event for event in state.derived}
+        return portfolio
 
     # --- folding -------------------------------------------------------------------------------
     @property
@@ -284,7 +406,6 @@ class Portfolio:
         instrument = self._reference.as_of(instrument_id, at_ns, now)
         if not isinstance(instrument, kind):
             raise PortfolioError(f"{instrument_id} is not a {kind.__name__} in effect at {at_ns}")
-        self._instruments[instrument_id] = instrument
         return instrument
 
     def _quantity(self, instrument_id: InstrumentId) -> Decimal:
@@ -329,7 +450,6 @@ class Portfolio:
         instrument = self._reference.as_of(fill.instrument_id, fill.ts_event_ns, now)
         if instrument is None:
             raise PortfolioError(f"fill {fill.id}: {fill.instrument_id} not in effect")
-        self._instruments[instrument.id] = instrument
         quantity = signed_quantity(fill)
         if isinstance(instrument, (CryptoSpot, FxPair)):
             lots = self._lots_of(instrument, instrument.quote_currency)
@@ -505,12 +625,10 @@ class Portfolio:
             return
         underlying = self._reference.as_of(delivery.instrument_id, event.ts_event_ns, now)
         if isinstance(underlying, Equity):
-            self._instruments[underlying.id] = underlying
             self._trade_at_value(underlying, delivery.quantity, delivery.price)
         elif isinstance(underlying, Future):
             state = self._futures.setdefault(underlying.id, _FutureState())
             state.trades.append((event.ts_event_ns, delivery.quantity, delivery.price))
-            self._instruments[underlying.id] = underlying
             self._lots_of(underlying, underlying.quote_currency).trade(
                 delivery.quantity, delivery.price
             )
@@ -527,14 +645,14 @@ class Portfolio:
             ex_date = action.ex_date_ns
             if ex_date is None:  # pragma: no cover - the event refuses it
                 raise PortfolioError(f"cash dividend {action.id} without an ex-date")
-            self._scheduled.append(_Scheduled(ex_date, self._order, action, "ex"))
+            self._scheduled.append(Scheduled(ex_date, self._order, action, "ex"))
             return
         if now >= action.effective_ns:
             raise CorporateActionLateError(
                 f"{action.kind} {action.id} recorded at {now}, at or after its effective time "
                 f"{action.effective_ns}"
             )
-        self._scheduled.append(_Scheduled(action.effective_ns, self._order, action, "effective"))
+        self._scheduled.append(Scheduled(action.effective_ns, self._order, action, "effective"))
 
     def _run_scheduled(self, now: int) -> None:
         while True:
@@ -545,7 +663,7 @@ class Portfolio:
             self._scheduled.remove(item)
             self._apply_scheduled(item)
 
-    def _apply_scheduled(self, item: _Scheduled) -> None:
+    def _apply_scheduled(self, item: Scheduled) -> None:
         action = item.action
         instrument_id = action.instrument_id
         if item.stage == "ex":
@@ -556,7 +674,7 @@ class Portfolio:
             pay = action.pay_date_ns
             if pay is None:  # pragma: no cover - the event refuses it
                 raise PortfolioError(f"cash dividend {action.id} without a pay date")
-            self._scheduled.append(_Scheduled(pay, item.order, action, "pay", entitled))
+            self._scheduled.append(Scheduled(pay, item.order, action, "pay", entitled))
         elif item.stage == "pay":
             self._post(dividend_payment(action, item.entitled, self._account))
         elif action.kind in {CorporateActionKind.SPLIT, CorporateActionKind.STOCK_DIVIDEND}:
@@ -570,8 +688,11 @@ class Portfolio:
             if new_id in self._lots:
                 raise PortfolioError(f"symbol change into {new_id}, which already has lots")
             if instrument_id in self._lots:
-                at = action.effective_ns
-                self._version(new_id, at, at, type(self._instruments[instrument_id]))
+                at, known = action.effective_ns, self._clock.now_ns()
+                old = self._reference.as_of(instrument_id, at, known)
+                if old is None:  # pragma: no cover - lots exist only for defined instruments
+                    raise PortfolioError(f"symbol change of undefined {instrument_id}")
+                self._version(new_id, at, known, type(old))
                 self._lots[new_id] = self._lots.pop(instrument_id)
         elif action.kind is CorporateActionKind.DELISTING:
             self._delisted.add(instrument_id)
@@ -600,11 +721,9 @@ class Portfolio:
         unmarked: list[InstrumentId] = []
         working = self._working_by_instrument()
         for instrument_id in sorted(set(self._lots) | set(working), key=str):
-            instrument = self._instruments.get(instrument_id) or self._reference.as_of(
-                instrument_id, as_of, as_of
-            )
+            instrument = self._reference.as_of(instrument_id, as_of, as_of)
             if instrument is None:
-                raise PortfolioError(f"working order on {instrument_id}, which is not defined")
+                raise PortfolioError(f"position or working order on undefined {instrument_id}")
             if self._quantity(instrument_id).is_zero() and instrument_id not in working:
                 continue
             row = self._position_view(instrument, working.get(instrument_id, Decimal(0)), as_of)

@@ -9,6 +9,7 @@ receivable balance; every other kind forms the cash balance.
 """
 
 from collections import defaultdict
+from collections.abc import Iterable
 from decimal import Decimal
 
 from auqua.contracts.numeric import exact
@@ -44,6 +45,18 @@ class Ledger:
             else:
                 self._cash[posting.currency] += posting.amount
         self._postings.append(posting)
+
+    @classmethod
+    def from_postings(cls, account: str, postings: Iterable[Posting]) -> Ledger:
+        """A ledger holding ``postings`` in order (their sums are the balances).
+
+        Raises:
+            PortfolioError: as :meth:`post`.
+        """
+        ledger = cls(account)
+        for posting in postings:
+            ledger.post(posting)
+        return ledger
 
     @property
     def postings(self) -> tuple[Posting, ...]:
