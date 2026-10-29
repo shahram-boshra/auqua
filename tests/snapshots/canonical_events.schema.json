@@ -1740,7 +1740,7 @@
     },
     "Option": {
       "additionalProperties": false,
-      "description": "Listed option.",
+      "description": "Listed option.\n\n``underlying`` describes the underlying interest as text; ``underlying_id``\nis the instrument a physical exercise delivers, when the source names it\n(BP6 amendment 4, F-K). Added within version 1 under Rule W: absent, it is\nnot encoded, so stored definitions keep their bytes.",
       "properties": {
         "exercise_style": {
           "$ref": "#/$defs/ExerciseStyle"
@@ -1789,6 +1789,17 @@
         },
         "underlying": {
           "type": "string"
+        },
+        "underlying_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstrumentId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "valid_from_ns": {
           "type": "integer"

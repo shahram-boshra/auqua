@@ -8,6 +8,7 @@ from decimal import Decimal
 import msgspec
 import pytest
 
+from auqua.contracts.events.base import LogRecord
 from auqua.contracts.events.lifecycle import (
     CorporateActionKind,
     CorporateActionV2,
@@ -15,11 +16,13 @@ from auqua.contracts.events.lifecycle import (
     OptionAssignment,
     OptionExercise,
 )
+from auqua.contracts.events.reference import InstrumentDefined
 from auqua.contracts.events.trading import Fill, Side
 from auqua.contracts.identity import InstrumentId
 from auqua.contracts.instruments import (
     Bond,
     DayCount,
+    Equity,
     ExerciseStyle,
     Identifiers,
     Option,
@@ -42,10 +45,12 @@ from auqua.portfolio.errors import (
 from auqua.portfolio.lots import Lots
 from auqua.portfolio.options import (
     Delivery,
+    ExerciseResult,
     cash_settlement_amount,
     exercise_effect,
     premium_postings,
 )
+from auqua.storage.reference import ReferenceIndex
 
 ACCOUNT = "primary"
 CENT = Decimal("0.01")
@@ -158,8 +163,15 @@ def test_split_and_stock_dividend_multipliers() -> None:
 
 
 # --- T7, T18: options ----------------------------------------------------------------------------
+XYZ = InstrumentId("XNYS", "XYZ")
+
+
 def _option(
-    instrument_id: InstrumentId, right: OptionRight, strike: str, settlement: Settlement
+    instrument_id: InstrumentId,
+    right: OptionRight,
+    strike: str,
+    settlement: Settlement,
+    underlying_id: InstrumentId | None = XYZ,
 ) -> Option:
     return Option(
         id=instrument_id,
@@ -176,7 +188,40 @@ def _option(
         expiry_ns=EX + 30 * DAY,
         exercise_style=ExerciseStyle.AMERICAN,
         settlement=settlement,
+        underlying_id=underlying_id,
     )
+
+
+def _reference(valid_from_ns: int = 0, knowledge_ns: int = 0) -> ReferenceIndex:
+    """XYZ shares defined from ``valid_from_ns``, known from ``knowledge_ns`` (ADR 0023)."""
+    shares = Equity(
+        id=XYZ,
+        quote_currency="USD",
+        price_increment=CENT,
+        quantity_increment=Decimal(1),
+        multiplier=Decimal(1),
+        valid_from_ns=valid_from_ns,
+        knowledge_ns=knowledge_ns,
+        identifiers=Identifiers(),
+        is_fund=False,
+    )
+    event = InstrumentDefined(
+        id=uuid.UUID(int=50),
+        source="ingest/test",
+        ts_event_ns=knowledge_ns,
+        ts_ingest_ns=knowledge_ns,
+        instrument=shares,
+    )
+    return ReferenceIndex.from_records([LogRecord(sequence=0, event=event)])
+
+
+def _effect(
+    event: OptionExercise | OptionAssignment,
+    option: Option,
+    reference: ReferenceIndex | None = None,
+) -> ExerciseResult:
+    index = _reference() if reference is None else reference
+    return exercise_effect(event, option, ACCOUNT, reference=index, known_ns=EX)
 
 
 def _exercise(
@@ -209,12 +254,27 @@ def test_premium_is_price_times_multiplier() -> None:
 def test_occ_physical_exercise() -> None:
     """Exercise 1 XYZ 50 call: pay $5,000 ($50 x 100) for 100 shares; assignment: the reverse."""
     call = _option(XYZ_CALL, OptionRight.CALL, "50", Settlement.PHYSICAL)
-    result = exercise_effect(_exercise(XYZ_CALL), call, ACCOUNT)
+    result = _effect(_exercise(XYZ_CALL), call)
     assert [(p.amount, p.kind) for p in result.postings] == [(Decimal(-5000), PostingKind.EXERCISE)]
-    assert result.delivery == Delivery("XYZ", Decimal(100), Decimal(50))
-    assigned = exercise_effect(_exercise(XYZ_CALL, assigned=True), call, ACCOUNT)
+    assert result.delivery == Delivery(XYZ, Decimal(100), Decimal(50))
+    assigned = _effect(_exercise(XYZ_CALL, assigned=True), call)
     assert assigned.postings[0].amount == Decimal(5000)
-    assert assigned.delivery == Delivery("XYZ", Decimal(-100), Decimal(50))
+    assert assigned.delivery == Delivery(XYZ, Decimal(-100), Decimal(50))
+
+
+def test_physical_delivery_needs_a_resolvable_underlying() -> None:
+    """No underlying_id, or one not in effect at the event as known: refused (F-K)."""
+    exercise = _exercise(XYZ_CALL)
+    without = _option(XYZ_CALL, OptionRight.CALL, "50", Settlement.PHYSICAL, underlying_id=None)
+    with pytest.raises(PortfolioError, match="without underlying_id"):
+        _effect(exercise, without)
+    call = _option(XYZ_CALL, OptionRight.CALL, "50", Settlement.PHYSICAL)
+    with pytest.raises(PortfolioError, match="not in effect"):
+        _effect(exercise, call, _reference(valid_from_ns=EX + 1))
+    with pytest.raises(PortfolioError, match="not in effect"):
+        _effect(exercise, call, _reference(knowledge_ns=EX + 1))
+    cash = _option(SPX, OptionRight.CALL, "100", Settlement.CASH, underlying_id=None)
+    assert _effect(_exercise(SPX, "110"), cash, ReferenceIndex()).delivery is None
 
 
 @pytest.mark.parametrize(
@@ -235,7 +295,7 @@ def test_cash_settlement_reproduces_occ(
     option = _option(SPX, right, "100", Settlement.CASH)
     quantity = Decimal(-1) if assigned else Decimal(1)
     assert cash_settlement_amount(option, quantity, Decimal(value)) == Decimal(amount)
-    result = exercise_effect(_exercise(SPX, value, assigned=assigned), option, ACCOUNT)
+    result = _effect(_exercise(SPX, value, assigned=assigned), option)
     assert sum((p.amount for p in result.postings), Decimal(0)) == Decimal(amount)
     assert result.delivery is None
 
@@ -244,15 +304,15 @@ def test_exercise_refusals() -> None:
     """Cash-settled without S, physical with S (F-D), and a physical put (R4) are refused."""
     cash_call = _option(SPX, OptionRight.CALL, "100", Settlement.CASH)
     with pytest.raises(PortfolioError, match="F-D"):
-        exercise_effect(_exercise(SPX), cash_call, ACCOUNT)
+        _effect(_exercise(SPX), cash_call)
     physical_call = _option(XYZ_CALL, OptionRight.CALL, "50", Settlement.PHYSICAL)
     with pytest.raises(PortfolioError, match="F-D"):
-        exercise_effect(_exercise(XYZ_CALL, "55"), physical_call, ACCOUNT)
+        _effect(_exercise(XYZ_CALL, "55"), physical_call)
     physical_put = _option(XYZ_CALL, OptionRight.PUT, "50", Settlement.PHYSICAL)
     with pytest.raises(PortfolioError, match="R4"):
-        exercise_effect(_exercise(XYZ_CALL), physical_put, ACCOUNT)
+        _effect(_exercise(XYZ_CALL), physical_put)
     with pytest.raises(PortfolioError, match="option"):
-        exercise_effect(_exercise(SPX, "110"), physical_call, ACCOUNT)
+        _effect(_exercise(SPX, "110"), physical_call)
 
 
 # --- T11 (amendment 2): bond fills and coupons ---------------------------------------------------
@@ -291,12 +351,15 @@ def test_bond_fill_posts_clean_notional_and_reported_accrued() -> None:
     ]
 
 
-def test_bond_fill_without_accrued_interest() -> None:
-    """Refused with a coupon; a zero-coupon fill is accepted without it (F-E2)."""
+def test_bond_fill_accrued_interest_presence() -> None:
+    """Required with a coupon (F-E2); a zero-coupon fill without it only (amendment 4)."""
     with pytest.raises(PortfolioError, match="F-E2"):
         bond_fill_postings(_fill(NOTE, Side.BUY, "1000", "99"), _note(), ACCOUNT)
     postings = bond_fill_postings(_fill(NOTE, Side.BUY, "1000", "95"), _note("0"), ACCOUNT)
     assert [p.kind for p in postings] == [PostingKind.TRADE, PostingKind.FEE]
+    with_accrued = _fill(NOTE, Side.BUY, "1000", "95", accrued_interest="0")
+    with pytest.raises(PortfolioError, match="zero-coupon"):
+        bond_fill_postings(with_accrued, _note("0"), ACCOUNT)
 
 
 def test_coupon_is_amount_per_unit_times_units_held() -> None:

@@ -122,7 +122,11 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   multipliers. Options: premium, physical exercise of calls at the strike,
   cash settlement from the exercise settlement value (OCC). Bonds: the clean
   notional and the reported accrued interest on fills (required with a
-  coupon), coupons per unit held.
+  coupon), coupons per unit held. BP6 amendment 4: an option may name its
+  underlying instrument (`underlying_id`, added within version 1 without
+  changing stored bytes); a physical exercise or assignment needs it, in effect
+  at the event as known at the decision time; a zero-coupon fill with accrued
+  interest is refused.
 
 ### Changed
 

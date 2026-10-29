@@ -753,6 +753,7 @@ def test_codec_configuration_errors() -> None:
 
 # --- BP6 amendment 2, Rule W: optional fields within a version keep stored bytes ----------------
 #: Payloads encoded by the code before amendment 2 (main 5985e6b), byte for byte.
+XYZ_SHARES = InstrumentId("XNYS", "XYZ")
 PRE_RULE_W = (
     b'{"type":"execution.fill.v1","id":"00000000-0000-0000-0000-000000000001",'
     b'"source":"ingest/test","ts_event_ns":1735689600000000000,'
@@ -771,11 +772,19 @@ PRE_RULE_W = (
     b'"source":"ingest/test","ts_event_ns":1735689600000000000,'
     b'"ts_ingest_ns":1735689600000000001,"instrument_id":{"venue":"DUKASCOPY","symbol":"EURUSD"},'
     b'"value_date_ns":1735862400000000000,"base_amount":"1000000","quote_amount":"1085000.00"}',
+    b'{"type":"reference.instrument.v1","id":"00000000-0000-0000-0000-000000000007",'
+    b'"source":"ingest/test","ts_event_ns":1735689600000000000,'
+    b'"ts_ingest_ns":1735689600000000001,"instrument":{"type":"instrument.option.v1",'
+    b'"id":{"venue":"OCC","symbol":"XYZ-C50"},"quote_currency":"USD","price_increment":"0.01",'
+    b'"quantity_increment":"1","multiplier":"100","valid_from_ns":0,"knowledge_ns":0,'
+    b'"identifiers":{"figi":null,"isin":null,"cfi":null,"dti":null},"underlying":"XYZ",'
+    b'"right":"call","strike":"50","expiry_ns":1767225600000000000,"exercise_style":"american",'
+    b'"settlement":"physical"}}',
 )
 
 
 @pytest.mark.parametrize(
-    "payload", PRE_RULE_W, ids=["fill", "exercise", "assignment", "fx_settlement"]
+    "payload", PRE_RULE_W, ids=["fill", "exercise", "assignment", "fx_settlement", "option"]
 )
 def test_rule_w_keeps_stored_payloads_byte_identical(payload: bytes) -> None:
     """A stored event without the new field decodes and re-encodes to the same bytes."""
@@ -800,5 +809,12 @@ def test_rule_w_fields_round_trip_when_present() -> None:
     )
     assert b'"causation_id":"00000000-0000-0000-0000-000000000006"' in encode(settlement)
     assert CANONICAL.decode(encode(settlement)) == settlement
+    defined = CANONICAL.decode(PRE_RULE_W[4])
+    assert isinstance(defined, InstrumentDefined)
+    option = msgspec.structs.replace(
+        defined, instrument=msgspec.structs.replace(defined.instrument, underlying_id=XYZ_SHARES)
+    )
+    assert b'"underlying_id":{"venue":"XNYS","symbol":"XYZ"}' in encode(option)
+    assert CANONICAL.decode(encode(option)) == option
     with pytest.raises(InvalidDecimalError):
         msgspec.structs.replace(fill, accrued_interest=Decimal("NaN"))

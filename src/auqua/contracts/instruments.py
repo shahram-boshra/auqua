@@ -166,8 +166,14 @@ class Future(Instrument, frozen=True, tag="instrument.future.v1"):
             raise InvalidFieldError("expiry_ns must not precede last_trade_ns")
 
 
-class Option(Instrument, frozen=True, tag="instrument.option.v1"):
-    """Listed option."""
+class Option(Instrument, frozen=True, tag="instrument.option.v1", omit_defaults=True):
+    """Listed option.
+
+    ``underlying`` describes the underlying interest as text; ``underlying_id``
+    is the instrument a physical exercise delivers, when the source names it
+    (BP6 amendment 4, F-K). Added within version 1 under Rule W: absent, it is
+    not encoded, so stored definitions keep their bytes.
+    """
 
     asset_class: ClassVar[AssetClass] = AssetClass.OPTION
 
@@ -177,6 +183,7 @@ class Option(Instrument, frozen=True, tag="instrument.option.v1"):
     expiry_ns: int
     exercise_style: ExerciseStyle
     settlement: Settlement
+    underlying_id: InstrumentId | None = None
 
     def __post_init__(self) -> None:
         """Validate the strike and expiry."""

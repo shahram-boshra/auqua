@@ -10,7 +10,10 @@ Pure functions for the account fold.
 - **Physical exercise:** a transaction in the underlying at the strike (OCC:
   "pay $5,000 ($50 x 100) in exchange for receipt of 100 XYZ shares"). The
   holder of a call receives the underlying, the writer assigned delivers it.
-  The put side is not sourced and is refused (BP6 R4).
+  The underlying is the option's ``underlying_id``, which must resolve to an
+  instrument version in effect at the event as known at the decision time
+  (ADR 0023); otherwise the exercise is refused (amendment 4, F-K). The put
+  side is not sourced and is refused (BP6 R4).
 - **Cash settlement** (OCC, *Characteristics and Risks of Standardized
   Options*, June 2024, ch. II): call ``max(0, S - K) x M x q``, put
   ``max(0, K - S) x M x q``, with S the event's ``exercise_settlement_value``
@@ -26,11 +29,13 @@ from decimal import Decimal
 
 from auqua.contracts.events.lifecycle import OptionAssignment, OptionExercise
 from auqua.contracts.events.trading import Fill
+from auqua.contracts.identity import InstrumentId
 from auqua.contracts.instruments import Option, OptionRight, Settlement
 from auqua.contracts.numeric import exact
 from auqua.contracts.portfolio import Posting, PostingKind
 from auqua.portfolio.effects import fee_posting, signed_quantity
 from auqua.portfolio.errors import PortfolioError
+from auqua.storage.reference import ReferenceIndex
 
 
 def premium_postings(fill: Fill, option: Option, account: str) -> tuple[Posting, ...]:
@@ -56,13 +61,9 @@ def premium_postings(fill: Fill, option: Option, account: str) -> tuple[Posting,
 
 @dataclass(frozen=True)
 class Delivery:
-    """The underlying transaction of a physical exercise: ``quantity`` (signed) at ``price``.
+    """The underlying transaction of a physical exercise: ``quantity`` (signed) at ``price``."""
 
-    ``underlying`` is the option's ``underlying`` text; the fold resolves the
-    instrument it names.
-    """
-
-    underlying: str
+    instrument_id: InstrumentId
     quantity: Decimal
     price: Decimal
 
@@ -86,14 +87,23 @@ def cash_settlement_amount(option: Option, quantity: Decimal, settlement_value: 
 
 
 def exercise_effect(
-    event: OptionExercise | OptionAssignment, option: Option, account: str
+    event: OptionExercise | OptionAssignment,
+    option: Option,
+    account: str,
+    *,
+    reference: ReferenceIndex,
+    known_ns: int,
 ) -> ExerciseResult:
     """The effect of an exercise (holder) or an assignment (writer) on the account.
+
+    A physical delivery's underlying is resolved in ``reference`` at the
+    event's ``ts_event_ns`` as known at ``known_ns``.
 
     Raises:
         PortfolioError: another instrument; a cash-settled event without
             ``exercise_settlement_value`` or a physical one with it (F-D); a
-            physical put (R4).
+            physical put (R4); a physical exercise without ``underlying_id`` or
+            with one not in effect at the event (F-K).
     """
     if event.instrument_id != option.id:
         raise PortfolioError(f"{type(event).__name__} of {event.instrument_id}, option {option.id}")
@@ -115,8 +125,16 @@ def exercise_effect(
         )
     if option.right is not OptionRight.CALL:
         raise PortfolioError(f"physical exercise of put {option.id} is not sourced (BP6 R4)")
+    if option.underlying_id is None:
+        raise PortfolioError(f"physical {option.id} without underlying_id (amendment 4, F-K)")
+    underlying = reference.as_of(option.underlying_id, event.ts_event_ns, known_ns)
+    if underlying is None:
+        raise PortfolioError(
+            f"underlying {option.underlying_id} of {option.id} is not in effect at "
+            f"{event.ts_event_ns} as known at {known_ns} (amendment 4, F-K)"
+        )
     with exact():
         units = quantity * option.multiplier
         cash = -(option.strike * units)
     posting = Posting(account, option.quote_currency, cash, PostingKind.EXERCISE, event.id)
-    return ExerciseResult((posting,), Delivery(option.underlying, units, option.strike))
+    return ExerciseResult((posting,), Delivery(underlying.id, units, option.strike))
