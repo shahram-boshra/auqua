@@ -158,6 +158,9 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   the log's chain or ahead of it is rebuilt from 0, otherwise the fold
   continues from its position with the instrument index of the records before
   it. The event-log reader yields records with their verified chain hashes.
+  BP6 amendment 9: the projection is stamped with the configuration identity
+  (`config_id`) and the identifier of the code that folded it (passed in by
+  the caller); either differing rebuilds it from 0.
 
 ### Changed
 
