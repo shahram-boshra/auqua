@@ -139,8 +139,14 @@ class RiskDecision(Event, frozen=True, tag="risk.decision.v1"):
             raise InvalidFieldError("a rejection needs rule, limit and value")
 
 
-class Fill(Event, frozen=True, tag="execution.fill.v1"):
-    """Execution of an order (``causation_id`` is the order id)."""
+class Fill(Event, frozen=True, tag="execution.fill.v1", omit_defaults=True):
+    """Execution of an order (``causation_id`` is the order id).
+
+    ``accrued_interest`` is the accrued interest the buyer pays the seller, in
+    the quote currency, as the venue reports it (bonds). Added within version 1
+    under Rule W (BP6 amendment 2): absent, it is not encoded, so stored fills
+    keep their bytes.
+    """
 
     causation_id: uuid.UUID
     instrument_id: InstrumentId
@@ -149,11 +155,30 @@ class Fill(Event, frozen=True, tag="execution.fill.v1"):
     quantity: Decimal
     fee: Decimal
     fee_currency: str
+    accrued_interest: Decimal | None = None
 
     def __post_init__(self) -> None:
-        """Validate price, quantity, fee and currency."""
+        """Validate price, quantity, fee, currency and accrued interest."""
         super().__post_init__()
-        require_decimals(price=self.price)
+        require_decimals(price=self.price, accrued_interest=self.accrued_interest)
         require_positive(self.quantity, "quantity")
         require_non_negative(self.fee, "fee")
         require_match(self.fee_currency, CURRENCY_CODE, "fee_currency")
+
+
+class AllocationUnavailableReason(StrEnum):
+    """Why an allocator made no proposal for an instrument (BP6 section 4.9, amendment 2)."""
+
+    RATE_UNAVAILABLE = "rate_unavailable"
+    EQUITY_INCOMPLETE = "equity_incomplete"
+    VOLATILITY_WARMUP = "volatility_warmup"
+    VOLATILITY_INVALID = "volatility_invalid"
+    PRICE_UNAVAILABLE = "price_unavailable"
+
+
+class AllocationUnavailable(Event, frozen=True, tag="portfolio.allocation_unavailable.v1"):
+    """No target proposed for one instrument, and why (``causation_id``: the signal)."""
+
+    causation_id: uuid.UUID
+    instrument_id: InstrumentId
+    reason: AllocationUnavailableReason

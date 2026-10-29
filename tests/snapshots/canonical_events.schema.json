@@ -176,6 +176,63 @@
       ],
       "title": "Aggressor"
     },
+    "AllocationUnavailable": {
+      "additionalProperties": false,
+      "description": "No target proposed for one instrument, and why (``causation_id``: the signal).",
+      "properties": {
+        "causation_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "instrument_id": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "reason": {
+          "$ref": "#/$defs/AllocationUnavailableReason"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "portfolio.allocation_unavailable.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "causation_id",
+        "instrument_id",
+        "reason"
+      ],
+      "title": "AllocationUnavailable",
+      "type": "object"
+    },
+    "AllocationUnavailableReason": {
+      "description": "Why an allocator made no proposal for an instrument (BP6 section 4.9, amendment 2).",
+      "enum": [
+        "equity_incomplete",
+        "price_unavailable",
+        "rate_unavailable",
+        "volatility_invalid",
+        "volatility_warmup"
+      ],
+      "title": "AllocationUnavailableReason"
+    },
     "AvailabilityBasis": {
       "description": "How the availability time of the run's records was established (BP4 section 4.6).",
       "enum": [
@@ -496,7 +553,7 @@
     },
     "CorporateActionV2": {
       "additionalProperties": false,
-      "description": "Corporate action with the three dates of a cash dividend (BP6 C1).\n\nAs version 1, plus ``ex_date_ns``, ``record_date_ns`` and ``pay_date_ns``:\neach the start of that date in the listing venue's time zone, as UTC\nnanoseconds, set by the producer. They are required for a cash dividend and\nforbidden for the other kinds. Entitlement is fixed at the ex-date (a\npurchase on or after it does not receive the dividend), so for a cash\ndividend ``effective_ns`` equals ``ex_date_ns``; for the other kinds\n``effective_ns`` keeps its version-1 meaning. The dates are not ordered\nhere: for a distribution of 25 percent or more the ex-date follows the\npayable date (FINRA Rule 11140(b)(2)).",
+      "description": "Corporate action with the three dates of a cash dividend (BP6 C1).\n\nAs version 1, plus ``ex_date_ns``, ``record_date_ns`` and ``pay_date_ns``:\neach the start of that date in the listing venue's time zone, as UTC\nnanoseconds, set by the producer. They are required for a cash dividend and\nforbidden for the other kinds. Entitlement is fixed at the ex-date (a\npurchase on or after it does not receive the dividend), so for a cash\ndividend ``effective_ns`` equals ``ex_date_ns``; for the other kinds\n``effective_ns`` keeps its version-1 meaning, which for a split or a stock\ndividend is the start of its ex-date, the first day trading at the\nadjusted price (BP6 amendment 2). The dates are not ordered\nhere: for a distribution of 25 percent or more the ex-date follows the\npayable date (FINRA Rule 11140(b)(2)).",
       "properties": {
         "cash_amount": {
           "anyOf": [
@@ -790,6 +847,7 @@
         "act_365_fixed",
         "act_act_icma",
         "act_act_isda",
+        "act_act_treasury",
         "thirty_360"
       ],
       "title": "DayCount"
@@ -897,8 +955,20 @@
     },
     "Fill": {
       "additionalProperties": false,
-      "description": "Execution of an order (``causation_id`` is the order id).",
+      "description": "Execution of an order (``causation_id`` is the order id).\n\n``accrued_interest`` is the accrued interest the buyer pays the seller, in\nthe quote currency, as the venue reports it (bonds). Added within version 1\nunder Rule W (BP6 amendment 2): absent, it is not encoded, so stored fills\nkeep their bytes.",
       "properties": {
+        "accrued_interest": {
+          "anyOf": [
+            {
+              "format": "decimal",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "causation_id": {
           "format": "uuid",
           "type": "string"
@@ -1734,8 +1804,20 @@
     },
     "OptionAssignment": {
       "additionalProperties": false,
-      "description": "Assignment to the writer: the counterparty side of an exercise (CDM: ``exercise``).",
+      "description": "Assignment to the writer: the counterparty side of an exercise (CDM: ``exercise``).\n\n``exercise_settlement_value`` as for :class:`OptionExercise` (Rule W).",
       "properties": {
+        "exercise_settlement_value": {
+          "anyOf": [
+            {
+              "format": "decimal",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "id": {
           "format": "uuid",
           "type": "string"
@@ -1776,8 +1858,20 @@
     },
     "OptionExercise": {
       "additionalProperties": false,
-      "description": "Exercise of option contracts by the holder (CDM: ``exercise``; intent ``OptionExercise``).",
+      "description": "Exercise of option contracts by the holder (CDM: ``exercise``; intent ``OptionExercise``).\n\n``exercise_settlement_value`` is the value S of a cash-settled option's\nunderlying interest that sets the cash settlement amount (OCC\n*Characteristics and Risks of Standardized Options*, ch. II); it is absent\nfor physical settlement. Added within version 1 under Rule W (BP6\namendment 2): absent, it is not encoded, so stored events keep their bytes.",
       "properties": {
+        "exercise_settlement_value": {
+          "anyOf": [
+            {
+              "format": "decimal",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "id": {
           "format": "uuid",
           "type": "string"
@@ -2902,6 +2996,9 @@
       "$ref": "#/$defs/AccountStatement"
     },
     {
+      "$ref": "#/$defs/AllocationUnavailable"
+    },
+    {
       "$ref": "#/$defs/Bar"
     },
     {
@@ -2999,6 +3096,7 @@
       "market.settlement_price.v1": "#/$defs/SettlementPrice",
       "market.trade.v1": "#/$defs/Trade",
       "order.submitted.v1": "#/$defs/OrderSubmitted",
+      "portfolio.allocation_unavailable.v1": "#/$defs/AllocationUnavailable",
       "portfolio.reconciliation.v1": "#/$defs/ReconciliationResult",
       "portfolio.snapshot.v1": "#/$defs/AccountSnapshot",
       "portfolio.target.v1": "#/$defs/Target",

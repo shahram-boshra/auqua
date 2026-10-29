@@ -57,6 +57,7 @@ class PostingKind(StrEnum):
     DIVIDEND = "dividend"
     RECEIVABLE = "receivable"
     REALIZED = "realized"
+    ACCRUED = "accrued"
 
 
 class Posting(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
@@ -64,7 +65,9 @@ class Posting(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 
     ``cause_id`` is the id of the event that caused it. ``receivable``
     postings form the receivable balance (a dividend fixed and not yet paid),
-    every other kind the cash balance.
+    every other kind the cash balance. ``accrued`` is a bond fill's reported
+    accrued interest (buyer negative, seller positive), never part of a lot's
+    cost (BP6 amendment 2).
     """
 
     account: str

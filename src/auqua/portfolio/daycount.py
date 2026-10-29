@@ -6,7 +6,8 @@
   "Number of Days = (Y2 - Y1) 360 + (M2 - M1) 30 + (D2 - D1)"; if "D2" is 31
   and "D1" is 30 or 31, "D2" becomes 30; if "D1" is 31, it becomes 30. G-33
   has no other day adjustment (none for February).
-- US Treasury notes and bonds: 31 CFR 356, Appendix B. The daily interest
+- US Treasury notes and bonds (``DayCount.ACT_ACT_TREASURY``, semiannual coupons
+  only): 31 CFR 356, Appendix B. The daily interest
   decimal is "1/181, 1/182, 1/183, or 1/184 of a full semiannual interest
   payment", multiplied "by the number of days for which interest has
   accrued", rounded "to five decimal places for a $1,000 par amount, using
@@ -24,7 +25,7 @@ import math
 from collections.abc import Sequence
 from decimal import Decimal
 
-from auqua.contracts.instruments import DayCount
+from auqua.contracts.instruments import Bond, DayCount
 from auqua.contracts.numeric import Rounding, divide, exact
 from auqua.portfolio.errors import DayCountNotSupportedError, PortfolioError, RoundingTieError
 
@@ -35,14 +36,37 @@ _THIRTY = 30
 _THIRTY_ONE = 31
 
 
+_SOURCED = frozenset({DayCount.THIRTY_360, DayCount.ACT_ACT_TREASURY})
+#: The Treasury rule is stated for semiannual interest (BP6 amendment 2).
+_SEMIANNUAL = 2
+
+
 def require_supported(convention: DayCount) -> None:
     """Refuse a convention without a verified source.
 
     Raises:
-        DayCountNotSupportedError: anything but ``THIRTY_360``.
+        DayCountNotSupportedError: anything but ``THIRTY_360`` and ``ACT_ACT_TREASURY``.
     """
-    if convention is not DayCount.THIRTY_360:
+    if convention not in _SOURCED:
         raise DayCountNotSupportedError(f"day count {convention} has no verified source")
+
+
+def require_bond_day_count(bond: Bond) -> DayCount:
+    """The bond's day count if it is sourced for this bond.
+
+    ``ACT_ACT_TREASURY`` divides "a full semiannual interest payment" (31 CFR
+    356, App. B), so it is accepted only for ``coupon_frequency == 2``.
+
+    Raises:
+        DayCountNotSupportedError: an unsourced convention, or the Treasury
+            rule for a bond that does not pay semiannually.
+    """
+    require_supported(bond.day_count)
+    if bond.day_count is DayCount.ACT_ACT_TREASURY and bond.coupon_frequency != _SEMIANNUAL:
+        raise DayCountNotSupportedError(
+            f"act_act_treasury needs semiannual coupons, {bond.id} pays {bond.coupon_frequency}"
+        )
+    return bond.day_count
 
 
 def thirty_360_days(start: datetime.date, end: datetime.date) -> int:

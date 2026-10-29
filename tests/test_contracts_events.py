@@ -65,6 +65,8 @@ from auqua.contracts.events.lifecycle import CorporateActionKind
 from auqua.contracts.events.market import Aggressor
 from auqua.contracts.events.research import PeriodName, RunStartedV2, Trial
 from auqua.contracts.events.trading import (
+    AllocationUnavailable,
+    AllocationUnavailableReason,
     Fill,
     OrderSubmitted,
     OrderType,
@@ -357,6 +359,12 @@ def _trading_examples() -> list[Event]:
             provider_version="1",
         ),
         Target(**_common(new_id()), causation_id=cause, instrument_id=BTC, quantity=Decimal(1)),
+        AllocationUnavailable(
+            **_common(new_id()),
+            causation_id=cause,
+            instrument_id=BTC,
+            reason=AllocationUnavailableReason.VOLATILITY_WARMUP,
+        ),
         OrderSubmitted(
             **_common(new_id()),
             causation_id=cause,
@@ -741,3 +749,45 @@ def test_codec_configuration_errors() -> None:
         EventCodec(())
     with pytest.raises(ValueError, match="both current and legacy"):
         EventCodec((_PingV2,), {_PingV2: lambda e: e})
+
+
+# --- BP6 amendment 2, Rule W: optional fields within a version keep stored bytes ----------------
+#: Payloads encoded by the code before amendment 2 (main 5985e6b), byte for byte.
+PRE_RULE_W = (
+    b'{"type":"execution.fill.v1","id":"00000000-0000-0000-0000-000000000001",'
+    b'"source":"ingest/test","ts_event_ns":1735689600000000000,'
+    b'"ts_ingest_ns":1735689600000000001,"causation_id":"00000000-0000-0000-0000-000000000002",'
+    b'"instrument_id":{"venue":"BINANCE","symbol":"BTCUSDT"},"side":"sell","price":"93800.10",'
+    b'"quantity":"1","fee":"9.38","fee_currency":"USDT"}',
+    b'{"type":"lifecycle.option_exercise.v1","id":"00000000-0000-0000-0000-000000000003",'
+    b'"source":"ingest/test","ts_event_ns":1735689600000000000,'
+    b'"ts_ingest_ns":1735689600000000001,"instrument_id":{"venue":"CBOE","symbol":"SPX-C5000"},'
+    b'"quantity":"1"}',
+    b'{"type":"lifecycle.option_assignment.v1","id":"00000000-0000-0000-0000-000000000004",'
+    b'"source":"ingest/test","ts_event_ns":1735689600000000000,'
+    b'"ts_ingest_ns":1735689600000000001,"instrument_id":{"venue":"CBOE","symbol":"SPX-C5000"},'
+    b'"quantity":"1"}',
+)
+
+
+@pytest.mark.parametrize("payload", PRE_RULE_W, ids=["fill", "exercise", "assignment"])
+def test_rule_w_keeps_stored_payloads_byte_identical(payload: bytes) -> None:
+    """A stored event without the new field decodes and re-encodes to the same bytes."""
+    event = CANONICAL.decode(payload)
+    assert encode(event) == payload
+
+
+def test_rule_w_fields_round_trip_when_present() -> None:
+    """Present, the new fields are encoded, decoded and validated (F-D, F-E2)."""
+    fill = msgspec.structs.replace(
+        CANONICAL.decode(PRE_RULE_W[0]), accrued_interest=Decimal("16.87500")
+    )
+    data = encode(fill)
+    assert b'"accrued_interest":"16.87500"' in data
+    assert CANONICAL.decode(data) == fill
+    exercise = msgspec.structs.replace(
+        CANONICAL.decode(PRE_RULE_W[1]), exercise_settlement_value=Decimal("5100.25")
+    )
+    assert CANONICAL.decode(encode(exercise)) == exercise
+    with pytest.raises(InvalidDecimalError):
+        msgspec.structs.replace(fill, accrued_interest=Decimal("NaN"))

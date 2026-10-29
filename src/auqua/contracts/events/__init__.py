@@ -30,6 +30,7 @@ from auqua.contracts.events.market import Bar, Quote, ReferenceRate, SettlementP
 from auqua.contracts.events.reference import InstrumentDefined
 from auqua.contracts.events.research import RunStartedV2, Trial
 from auqua.contracts.events.trading import (
+    AllocationUnavailable,
     Fill,
     OrderSubmitted,
     RiskDecision,
@@ -66,11 +67,13 @@ CanonicalEvent = (
     | AccountStatement
     | ReconciliationResult
     | AccountSnapshot
+    | AllocationUnavailable
 )
 
 __all__ = [
     "AccountSnapshot",
     "AccountStatement",
+    "AllocationUnavailable",
     "Bar",
     "CanonicalEvent",
     "CashTransfer",

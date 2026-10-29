@@ -92,7 +92,9 @@ class CorporateActionV2(Event, frozen=True, tag="lifecycle.corporate_action.v2")
     forbidden for the other kinds. Entitlement is fixed at the ex-date (a
     purchase on or after it does not receive the dividend), so for a cash
     dividend ``effective_ns`` equals ``ex_date_ns``; for the other kinds
-    ``effective_ns`` keeps its version-1 meaning. The dates are not ordered
+    ``effective_ns`` keeps its version-1 meaning, which for a split or a stock
+    dividend is the start of its ex-date, the first day trading at the
+    adjusted price (BP6 amendment 2). The dates are not ordered
     here: for a distribution of 25 percent or more the ex-date follows the
     payable date (FINRA Rule 11140(b)(2)).
     """
@@ -166,28 +168,44 @@ class FuturesExpiry(Event, frozen=True, tag="lifecycle.futures_expiry.v1"):
         require_decimals(settlement_price=self.settlement_price)
 
 
-class OptionExercise(Event, frozen=True, tag="lifecycle.option_exercise.v1"):
-    """Exercise of option contracts by the holder (CDM: ``exercise``; intent ``OptionExercise``)."""
+class OptionExercise(Event, frozen=True, tag="lifecycle.option_exercise.v1", omit_defaults=True):
+    """Exercise of option contracts by the holder (CDM: ``exercise``; intent ``OptionExercise``).
+
+    ``exercise_settlement_value`` is the value S of a cash-settled option's
+    underlying interest that sets the cash settlement amount (OCC
+    *Characteristics and Risks of Standardized Options*, ch. II); it is absent
+    for physical settlement. Added within version 1 under Rule W (BP6
+    amendment 2): absent, it is not encoded, so stored events keep their bytes.
+    """
 
     instrument_id: InstrumentId
     quantity: Decimal
+    exercise_settlement_value: Decimal | None = None
 
     def __post_init__(self) -> None:
-        """Validate the exercised quantity."""
+        """Validate the exercised quantity and the settlement value."""
         super().__post_init__()
         require_positive(self.quantity, "quantity")
+        require_decimals(exercise_settlement_value=self.exercise_settlement_value)
 
 
-class OptionAssignment(Event, frozen=True, tag="lifecycle.option_assignment.v1"):
-    """Assignment to the writer: the counterparty side of an exercise (CDM: ``exercise``)."""
+class OptionAssignment(
+    Event, frozen=True, tag="lifecycle.option_assignment.v1", omit_defaults=True
+):
+    """Assignment to the writer: the counterparty side of an exercise (CDM: ``exercise``).
+
+    ``exercise_settlement_value`` as for :class:`OptionExercise` (Rule W).
+    """
 
     instrument_id: InstrumentId
     quantity: Decimal
+    exercise_settlement_value: Decimal | None = None
 
     def __post_init__(self) -> None:
-        """Validate the assigned quantity."""
+        """Validate the assigned quantity and the settlement value."""
         super().__post_init__()
         require_positive(self.quantity, "quantity")
+        require_decimals(exercise_settlement_value=self.exercise_settlement_value)
 
 
 class OptionExpiry(Event, frozen=True, tag="lifecycle.option_expiry.v1"):
