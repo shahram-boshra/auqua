@@ -17,9 +17,10 @@ from auqua.contracts.events.base import Event, LogRecord
 from auqua.contracts.events.market import Bar, ReferenceRate
 from auqua.contracts.events.reference import InstrumentDefined
 from auqua.contracts.identity import InstrumentId, SeriesId
-from auqua.contracts.instruments import CryptoSpot, DayCount, Identifiers
+from auqua.contracts.instruments import Bond, CryptoSpot, DayCount, Identifiers
 from auqua.contracts.portfolio import Posting, PostingKind
 from auqua.portfolio.daycount import (
+    require_bond_day_count,
     require_supported,
     thirty_360_days,
     treasury_accrued_amount,
@@ -199,6 +200,7 @@ def test_msrb_g33_thirty_360(
 def test_unsourced_day_counts_are_refused() -> None:
     """Conventions without a verified text are refused by name (P9, R2)."""
     require_supported(DayCount.THIRTY_360)
+    require_supported(DayCount.ACT_ACT_TREASURY)
     for convention in (
         DayCount.ACT_360,
         DayCount.ACT_365_FIXED,
@@ -338,3 +340,32 @@ def test_valuation_needs_the_base_currency_declared() -> None:
     """USD's minor units round every value, so USD must be configured."""
     with pytest.raises(ConfigurationError, match="USD"):
         Valuation(PortfolioConfig(), MarketView([]), ReferenceIndex())
+
+
+def _bond(day_count: DayCount, frequency: int) -> Bond:
+    return Bond(
+        id=InstrumentId("UST", "T-6.75-2005"),
+        quote_currency="USD",
+        price_increment=Decimal("0.0078125"),
+        quantity_increment=Decimal(1000),
+        multiplier=Decimal("0.01"),
+        valid_from_ns=0,
+        knowledge_ns=0,
+        identifiers=Identifiers(),
+        face_value=Decimal(1000),
+        coupon_rate=Decimal("0.0675") if frequency else Decimal(0),
+        coupon_frequency=frequency,
+        day_count=day_count,
+        issue_ns=0,
+        maturity_ns=10**18,
+    )
+
+
+def test_treasury_rule_only_for_semiannual_coupons() -> None:
+    """ACT_ACT_TREASURY divides a semiannual payment: other frequencies are refused (F-E1)."""
+    assert require_bond_day_count(_bond(DayCount.ACT_ACT_TREASURY, 2)) is DayCount.ACT_ACT_TREASURY
+    assert require_bond_day_count(_bond(DayCount.THIRTY_360, 1)) is DayCount.THIRTY_360
+    with pytest.raises(DayCountNotSupportedError, match="semiannual"):
+        require_bond_day_count(_bond(DayCount.ACT_ACT_TREASURY, 4))
+    with pytest.raises(DayCountNotSupportedError, match="act_act_icma"):
+        require_bond_day_count(_bond(DayCount.ACT_ACT_ICMA, 2))

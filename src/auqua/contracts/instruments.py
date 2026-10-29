@@ -92,6 +92,8 @@ class DayCount(StrEnum):
     ACT_ACT_ICMA = "act_act_icma"
     ACT_ACT_ISDA = "act_act_isda"
     THIRTY_360 = "thirty_360"
+    #: US Treasury notes and bonds: 31 CFR 356, Appendix B (semiannual interest).
+    ACT_ACT_TREASURY = "act_act_treasury"
 
 
 class Identifiers(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

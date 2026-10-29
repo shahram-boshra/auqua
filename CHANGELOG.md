@@ -96,7 +96,12 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   Appendix B, rounded once, an exact tie refused; other conventions refused)
   and conversion into USD at the decision time from the configured rate
   source, following the rate's published unit, recorded with rate, source and
-  availability, and reported unavailable when no rate is usable.
+  availability, and reported unavailable when no rate is usable. BP6
+  amendment 2: optional fields added within a version without changing stored
+  bytes (`omit_defaults`): `exercise_settlement_value` on option exercise and
+  assignment, `accrued_interest` on fills; day count `act_act_treasury`
+  (semiannual coupons only); posting kind `accrued`; event
+  `portfolio.allocation_unavailable.v1` with closed reasons.
 
 ### Changed
 

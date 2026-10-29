@@ -12,6 +12,7 @@ import subprocess
 import sys
 import textwrap
 from collections.abc import Iterator
+from contextlib import closing
 from decimal import Decimal
 from pathlib import Path
 
@@ -26,7 +27,7 @@ from hypothesis import strategies as st
 from auqua.clock.log import LogClock
 from auqua.config.base import Environment
 from auqua.config.storage import StorageConfig
-from auqua.contracts.codec import encode
+from auqua.contracts.codec import CANONICAL, encode
 from auqua.contracts.errors import UpcastRefusedError
 from auqua.contracts.events import (
     Bar,
@@ -180,6 +181,25 @@ def test_head_hash_is_an_independent_recomputation(log: EventLog, log_path: Path
         assert reader.verify() == head
         assert reader.head() == head
     assert record_hash(GENESIS, 0, encode(events[0])) == _independent_head(events[:1])
+
+
+def test_pre_rule_w_payload_reappends_as_a_duplicate(log_path: Path) -> None:
+    """A fill stored before amendment 2 re-appends as a duplicate: its bytes are unchanged."""
+    stored = (
+        b'{"type":"execution.fill.v1","id":"00000000-0000-0000-0000-000000000001",'
+        b'"source":"ingest/test","ts_event_ns":1735689600000000000,'
+        b'"ts_ingest_ns":1735689600000000001,"causation_id":"00000000-0000-0000-0000-000000000002",'
+        b'"instrument_id":{"venue":"BINANCE","symbol":"BTCUSDT"},"side":"sell","price":"93800.10",'
+        b'"quantity":"1","fee":"9.38","fee_currency":"USDT"}'
+    )
+    fill = CANONICAL.decode(stored)
+    with EventLog(log_path, ENV, busy_timeout_ms=TIMEOUT_MS) as log:
+        log.append([fill])
+        result = log.append([CANONICAL.decode(stored)])
+    assert (result.appended, result.duplicates) == (0, 1)
+    with closing(sqlite3.connect(log_path)) as connection:
+        (payload,) = connection.execute("SELECT payload FROM log WHERE sequence = 0").fetchone()
+    assert bytes(payload) == stored
 
 
 def test_unconvertible_legacy_version_is_refused_with_its_sequence(log_path: Path) -> None:
