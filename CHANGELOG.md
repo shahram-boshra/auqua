@@ -87,7 +87,11 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   round. Configuration schema version 5 adds the `portfolio` section: account
   id, base currency USD, and the operator's currencies, USD rate sources, margin
   requirements and funding-rate periods, each with its source and the date it
-  was read; a version-4 file migrates with an empty section.
+  was read; a version-4 file migrates with an empty section. The portfolio
+  ledger (postings and exact balances per currency, receivables apart from
+  cash) and first-in, first-out lots (economic cost without fees, splits that
+  keep a lot's total cost, and one rounding rule after a non-terminating split
+  whose parts sum exactly to the lot's cost).
 
 ### Changed
 
