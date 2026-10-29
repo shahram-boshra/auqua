@@ -132,6 +132,11 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   (keyed by its id and the SHA-256 of its canonical encoding), a re-sent
   statement with other content refused, and a break open until a later
   matched result resolves it.
+  BP6 amendment 5: an FX settlement that matches no pending fill is recorded
+  as `portfolio.fx_settlement_break.v1` with a closed reason (amounts,
+  unmatched, ambiguous); its id is derived from the settlement, so a repeat
+  is a log duplicate and changed content a conflict. A statement balance is
+  cash, excluding accruals.
 
 ### Changed
 

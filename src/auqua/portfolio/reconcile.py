@@ -18,6 +18,11 @@ same statement twice yields one result, and the same id with other content is
 refused (:class:`~auqua.portfolio.errors.ReconciliationConflictError`). A break
 stays open until a later ``matched`` result names it in ``resolves`` (an
 operator action, BP11).
+
+An FX settlement that matches no pending fill (:func:`auqua.portfolio.effects.match_fx_settlement`)
+is recorded apart, as a ``portfolio.fx_settlement_break.v1`` (amendment 5): its
+id is derived from the settlement's ``source`` and ``id``, so a repeat is a log
+duplicate and other content a conflict (BP3 duplicate rule).
 """
 
 import hashlib
@@ -29,16 +34,23 @@ from auqua.contracts.codec import encode
 from auqua.contracts.events.account import (
     AccountStatement,
     Difference,
+    FxSettlementBreak,
     ReconciliationResult,
     ReconciliationStatus,
 )
+from auqua.contracts.events.lifecycle import FxSettlement
 from auqua.contracts.identity import derived_id
 from auqua.contracts.portfolio import AccountView
+from auqua.portfolio.effects import FxMatch
 from auqua.portfolio.errors import PortfolioError, ReconciliationConflictError
 
 #: Namespace of reconciliation result ids (RFC 9562 name-based, ``derived_id``).
 RESULT_NAMESPACE = derived_id(
     uuid.NAMESPACE_URL, b"https://github.com/shahram-boshra/auqua#reconciliation"
+)
+#: Namespace of FX settlement break ids.
+FX_BREAK_NAMESPACE = derived_id(
+    uuid.NAMESPACE_URL, b"https://github.com/shahram-boshra/auqua#fx-settlement-break"
 )
 SOURCE = "portfolio/reconcile"
 
@@ -156,3 +168,30 @@ class Reconciler:
         )
         self.apply(result)
         return result
+
+
+def fx_settlement_break(
+    settlement: FxSettlement, match: FxMatch, *, recorded_ns: int
+) -> FxSettlementBreak | None:
+    """The break to record for ``settlement``, or ``None`` when it matched.
+
+    ``recorded_ns`` is the log-clock time of the settlement's record; the
+    break's ``ts_event_ns`` is the settlement's.
+
+    Raises:
+        PortfolioError: ``match`` is the outcome of another settlement.
+    """
+    if match.settlement_id != settlement.id:
+        raise PortfolioError(f"match of {match.settlement_id}, settlement {settlement.id}")
+    if match.reason is None:
+        return None
+    return FxSettlementBreak(
+        id=derived_id(FX_BREAK_NAMESPACE, settlement.source.encode(), settlement.id.bytes),
+        source=SOURCE,
+        ts_event_ns=settlement.ts_event_ns,
+        ts_ingest_ns=recorded_ns,
+        settlement_id=settlement.id,
+        reason=match.reason,
+        fill_id=match.fill_id,
+        differences=match.differences,
+    )

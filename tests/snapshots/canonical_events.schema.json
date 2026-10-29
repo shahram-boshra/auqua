@@ -1206,6 +1206,15 @@
       "title": "FuturesExpiry",
       "type": "object"
     },
+    "FxBreak": {
+      "description": "Why an FX settlement matched no pending fill (BP6 amendments 3 and 5).",
+      "enum": [
+        "ambiguous",
+        "amounts",
+        "unmatched"
+      ],
+      "title": "FxBreak"
+    },
     "FxDelivery": {
       "description": "Spot or forward delivery.",
       "enum": [
@@ -1356,6 +1365,67 @@
         "quote_amount"
       ],
       "title": "FxSettlement",
+      "type": "object"
+    },
+    "FxSettlementBreak": {
+      "additionalProperties": false,
+      "description": "An FX settlement that matched no pending fill, and why (BP6 amendment 5).\n\nRecorded only on a break, apart from statement results, as securities\nsettlement reports matching apart from statements (ISO 15022 MT548\nunmatched reasons, e.g. CMIS \"A matching instruction from your counterparty\ncould not be found\", DMON \"Settlement amount does not match\").\n``settlement_id`` is the ``FxSettlement``'s id; ``fill_id`` the referenced\nfill whose amounts differ (``amounts`` only); ``differences`` are listed\nexactly for ``amounts``.",
+      "properties": {
+        "differences": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Difference"
+          },
+          "type": "array"
+        },
+        "fill_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/FxBreak"
+        },
+        "settlement_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ts_event_ns": {
+          "type": "integer"
+        },
+        "ts_ingest_ns": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "portfolio.fx_settlement_break.v1"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "source",
+        "ts_event_ns",
+        "ts_ingest_ns",
+        "settlement_id",
+        "reason"
+      ],
+      "title": "FxSettlementBreak",
       "type": "object"
     },
     "GapReason": {
@@ -2785,7 +2855,7 @@
     },
     "StatementBalance": {
       "additionalProperties": false,
-      "description": "One currency's balance as the venue reports it.",
+      "description": "One currency's cash balance as the venue reports it: cash, excluding accruals.\n\nAccruals (for example dividend accruals, which venue statements list apart\nfrom cash) are not reconciled in phase 1 (BP6 amendment 5, R14).",
       "properties": {
         "amount": {
           "format": "decimal",
@@ -3049,6 +3119,9 @@
       "$ref": "#/$defs/FxSettlement"
     },
     {
+      "$ref": "#/$defs/FxSettlementBreak"
+    },
+    {
       "$ref": "#/$defs/IngestRun"
     },
     {
@@ -3120,6 +3193,7 @@
       "market.trade.v1": "#/$defs/Trade",
       "order.submitted.v1": "#/$defs/OrderSubmitted",
       "portfolio.allocation_unavailable.v1": "#/$defs/AllocationUnavailable",
+      "portfolio.fx_settlement_break.v1": "#/$defs/FxSettlementBreak",
       "portfolio.reconciliation.v1": "#/$defs/ReconciliationResult",
       "portfolio.snapshot.v1": "#/$defs/AccountSnapshot",
       "portfolio.target.v1": "#/$defs/Target",

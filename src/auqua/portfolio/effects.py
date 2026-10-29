@@ -37,10 +37,9 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from enum import StrEnum
 
 from auqua.config.portfolio import PortfolioConfig
-from auqua.contracts.events.account import Difference
+from auqua.contracts.events.account import Difference, FxBreak
 from auqua.contracts.events.lifecycle import FundingPaymentV2, FuturesExpiry, FxSettlement
 from auqua.contracts.events.trading import Fill, Side
 from auqua.contracts.identity import InstrumentId
@@ -186,14 +185,6 @@ def pending_fx(fill: Fill, pair: FxPair) -> PendingFx:
     with exact():
         quote = fill.price * fill.quantity
     return PendingFx(fill.id, pair.id, fill.side, fill.quantity, quote, fill.ts_event_ns)
-
-
-class FxBreak(StrEnum):
-    """Why an FX settlement matched no pending fill."""
-
-    AMOUNTS = "amounts"
-    UNMATCHED = "unmatched"
-    AMBIGUOUS = "ambiguous"
 
 
 @dataclass(frozen=True)

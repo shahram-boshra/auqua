@@ -11,6 +11,7 @@ import stat
 import subprocess
 import sys
 import textwrap
+import uuid
 from collections.abc import Iterator
 from contextlib import closing
 from decimal import Decimal
@@ -33,10 +34,12 @@ from auqua.contracts.events import (
     Bar,
     CorporateAction,
     CorporateActionV2,
+    FxSettlementBreak,
     InstrumentDefined,
     Quote,
     Trade,
 )
+from auqua.contracts.events.account import FxBreak
 from auqua.contracts.events.base import Event, LogRecord
 from auqua.contracts.events.lifecycle import CorporateActionKind
 from auqua.contracts.identity import InstrumentId, new_id
@@ -129,6 +132,23 @@ def test_sequences_contiguous_across_batches_and_reopen(log_path: Path) -> None:
     records = _records(log_path)
     assert [r.sequence for r in records] == list(range(5))
     assert [r.event for r in records] == events
+
+
+def test_fx_settlement_break_repeat_is_a_duplicate_and_change_a_conflict(log: EventLog) -> None:
+    """A recorded break re-appends as a duplicate; other content under its id conflicts (a69)."""
+    recorded = FxSettlementBreak(
+        id=uuid.UUID(int=77),
+        source="portfolio/reconcile",
+        ts_event_ns=T0,
+        ts_ingest_ns=T0 + 1,
+        settlement_id=uuid.UUID(int=78),
+        reason=FxBreak.UNMATCHED,
+    )
+    assert log.append([recorded]).appended == 1
+    assert log.append([recorded]).duplicates == 1
+    changed = msgspec.structs.replace(recorded, reason=FxBreak.AMBIGUOUS)
+    with pytest.raises(DuplicateConflictError, match="conflicts with sequence 0"):
+        log.append([changed])
 
 
 def test_duplicates_counted_and_conflicts_roll_back(log: EventLog, log_path: Path) -> None:

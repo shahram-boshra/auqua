@@ -46,6 +46,8 @@ from auqua.contracts.events.account import (
     AccountStatement,
     CashTransfer,
     Difference,
+    FxBreak,
+    FxSettlementBreak,
     ReconciliationResult,
     ReconciliationStatus,
     StatementBalance,
@@ -239,6 +241,13 @@ def _account_examples() -> list[Event]:
             statement_sha256="0" * 64,
             status=ReconciliationStatus.BREAK,
             differences=(Difference("balance:USD", Decimal(1), Decimal(2)),),
+        ),
+        FxSettlementBreak(
+            **_common(new_id()),
+            settlement_id=new_id(),
+            reason=FxBreak.AMOUNTS,
+            fill_id=new_id(),
+            differences=(Difference("quote_amount", Decimal(1085000), Decimal(1084999)),),
         ),
         AccountSnapshot(
             **_common(new_id()),
@@ -648,6 +657,26 @@ def test_account_event_rules() -> None:
     with pytest.raises(InvalidFieldError, match="lists"):
         ReconciliationResult(**_common(new_id()), **key, status=ReconciliationStatus.BREAK)
     differs = (Difference("balance:USD", Decimal(1), None),)
+    settled = new_id()
+    with pytest.raises(InvalidFieldError, match="exactly for an amounts break"):
+        FxSettlementBreak(
+            **_common(new_id()), settlement_id=settled, reason=FxBreak.AMOUNTS, fill_id=new_id()
+        )
+    with pytest.raises(InvalidFieldError, match="exactly for an amounts break"):
+        FxSettlementBreak(
+            **_common(new_id()),
+            settlement_id=settled,
+            reason=FxBreak.UNMATCHED,
+            differences=differs,
+        )
+    with pytest.raises(InvalidFieldError, match="fill_id"):
+        FxSettlementBreak(
+            **_common(new_id()), settlement_id=settled, reason=FxBreak.AMBIGUOUS, fill_id=new_id()
+        )
+    with pytest.raises(InvalidFieldError, match="fill_id"):
+        FxSettlementBreak(
+            **_common(new_id()), settlement_id=settled, reason=FxBreak.AMOUNTS, differences=differs
+        )
     with pytest.raises(InvalidFieldError, match="lists"):
         ReconciliationResult(
             **_common(new_id()), **key, status=ReconciliationStatus.MATCHED, differences=differs

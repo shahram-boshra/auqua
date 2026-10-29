@@ -11,6 +11,7 @@ from auqua.contracts.events.account import (
     AccountSnapshot,
     AccountStatement,
     CashTransfer,
+    FxSettlementBreak,
     ReconciliationResult,
 )
 from auqua.contracts.events.ingest import DataGap, IngestRun
@@ -66,6 +67,7 @@ CanonicalEvent = (
     | CashTransfer
     | AccountStatement
     | ReconciliationResult
+    | FxSettlementBreak
     | AccountSnapshot
     | AllocationUnavailable
 )
@@ -86,6 +88,7 @@ __all__ = [
     "FundingPaymentV2",
     "FuturesExpiry",
     "FxSettlement",
+    "FxSettlementBreak",
     "IngestRun",
     "InstrumentDefined",
     "OptionAssignment",
