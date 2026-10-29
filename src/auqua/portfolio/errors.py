@@ -21,3 +21,11 @@ class RoundingTieError(PortfolioError):
 
 class ConfigurationError(PortfolioError):
     """The portfolio configuration lacks an entry a computation needs (e.g. the base currency)."""
+
+
+class CorporateActionLateError(PortfolioError):
+    """A cash dividend recorded at or after its ex-date: never back-dated (BP6 section 4.5 A)."""
+
+
+class CorporateActionUnsupportedError(PortfolioError):
+    """A corporate action phase 1 does not apply, e.g. a dividend paid before its ex-date (F-G)."""
