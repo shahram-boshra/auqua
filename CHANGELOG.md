@@ -91,7 +91,12 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   ledger (postings and exact balances per currency, receivables apart from
   cash) and first-in, first-out lots (economic cost without fees, splits that
   keep a lot's total cost, and one rounding rule after a non-terminating split
-  whose parts sum exactly to the lot's cost).
+  whose parts sum exactly to the lot's cost). Day counts from their primary
+  texts (MSRB G-33 30/360; US Treasury accrued interest per 31 CFR 356,
+  Appendix B, rounded once, an exact tie refused; other conventions refused)
+  and conversion into USD at the decision time from the configured rate
+  source, following the rate's published unit, recorded with rate, source and
+  availability, and reported unavailable when no rate is usable.
 
 ### Changed
 
