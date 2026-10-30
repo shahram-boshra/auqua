@@ -230,9 +230,10 @@
       "type": "object"
     },
     "AllocationUnavailableReason": {
-      "description": "Why an allocator made no proposal for an instrument (BP6 section 4.9, amendment 2).",
+      "description": "Why an allocator made no proposal for an instrument (BP6 section 4.9, amendments 2 and 10).\n\n- ``RATE_UNAVAILABLE``: no usable rate for the quote currency.\n- ``EQUITY_INCOMPLETE``: the account's ``equity_base`` is unavailable.\n- ``VOLATILITY_WARMUP``: fewer daily returns than the warm-up.\n- ``VOLATILITY_INVALID``: sigma_hat zero, non-finite or undefined (a non-positive\n  close in the window).\n- ``PRICE_UNAVAILABLE``: no positive latest price.\n- ``EQUITY_NOT_POSITIVE``: ``equity_base`` is zero or negative (amendment\n  10, F-W; added within version 1: no stored event used the closed set).",
       "enum": [
         "equity_incomplete",
+        "equity_not_positive",
         "price_unavailable",
         "rate_unavailable",
         "volatility_invalid",

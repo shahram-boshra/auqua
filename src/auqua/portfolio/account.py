@@ -35,8 +35,10 @@ Effects per record, from the per-class modules:
 The view marks futures at their last settlement price (unrealized: the
 variation not yet settled), inverse perpetuals at the latest close (their
 unrealized P&L in the coin), equities, options and bonds at the latest close
-(market value minus the lots' exact cost). Spot pairs are listed too
-(quantity = the base held, so decisions read quantity + working), but their
+(market value minus the lots' exact cost); the latest close is
+:func:`~auqua.portfolio.valuation.latest_close`, and a close that is not
+positive leaves the position unmarked (amendment 10, F-Y). Spot pairs are
+listed too (quantity = the base held, so decisions read quantity + working), but their
 value enters equity only as the converted base balance, never again through
 the position (amendment 7). Equity per currency (F-R) = cash + receivable +
 the market value of equities, options and bonds (a written option negative)
@@ -73,7 +75,7 @@ from auqua.contracts.events.lifecycle import (
     OptionExercise,
     OptionExpiry,
 )
-from auqua.contracts.events.market import Bar, SettlementPrice
+from auqua.contracts.events.market import SettlementPrice
 from auqua.contracts.events.reference import InstrumentDefined
 from auqua.contracts.events.trading import Fill, OrderSubmitted, RiskDecision, Side
 from auqua.contracts.identity import InstrumentId
@@ -125,9 +127,9 @@ from auqua.portfolio.margin import PerInstrumentMargin, margin_rows
 from auqua.portfolio.options import exercise_effect, premium_postings
 from auqua.portfolio.reconcile import SOURCE as DERIVED_SOURCE
 from auqua.portfolio.reconcile import Reconciler, fx_settlement_break
-from auqua.portfolio.valuation import Valuation
+from auqua.portfolio.valuation import Valuation, latest_close
 from auqua.storage.chain import GENESIS
-from auqua.storage.marketview import MarketView, available_ns, released
+from auqua.storage.marketview import MarketView, available_ns
 from auqua.storage.reference import ReferenceIndex
 
 #: Instruments whose cost is paid in cash and whose market value counts in equity.
@@ -807,11 +809,13 @@ class Portfolio:
             )
             return state.last_price, state.last_available_ns, pending, pending
         close = (
-            None if instrument.id in self._delisted else self._latest_close(instrument.id, as_of)
+            None
+            if instrument.id in self._delisted
+            else latest_close(self._market, instrument.id, as_of, as_of)
         )
         if close is None:
             return None, None, None, None
-        mark, mark_ns = close
+        mark, mark_ns = close.close, available_ns(close)
         lots = self._lots.get(instrument.id)
         if isinstance(instrument, PerpetualSwap):
             coin = increment(self._config, instrument.settlement_currency)
@@ -831,19 +835,6 @@ class Portfolio:
             value = mark * instrument.multiplier * quantity
             unrealized = value - cost if quantity > 0 else value + cost
         return mark, mark_ns, unrealized, value
-
-    def _latest_close(self, instrument_id: InstrumentId, as_of: int) -> tuple[Decimal, int] | None:
-        candidates: list[Bar] = []
-        for listed, interval in self._market.bar_series():
-            if listed != instrument_id:
-                continue
-            bars = list(released(self._market.bars(listed, interval, known_ns=as_of), as_of))
-            if bars:
-                candidates.append(bars[-1])
-        if not candidates:
-            return None
-        latest = max(candidates, key=lambda bar: (available_ns(bar), bar.start_ns))
-        return latest.close, available_ns(latest)
 
     def _base_total(
         self, equity: dict[str, Decimal | None], as_of: int

@@ -258,6 +258,19 @@ def test_migrations() -> None:
         migrations.register(1, v1_to_v2)
 
 
+def test_migrations_read_the_version_from_their_key() -> None:
+    """A registry may name its version field (BP6 amendment 10: ``spec_version``)."""
+    migrations = Migrations("spec", current=2, key="spec_version")
+    migrations.register(1, lambda doc: doc | {"spec_version": 2, "new": True})
+    assert migrations.upgrade({"spec_version": 1}) == {"spec_version": 2, "new": True}
+    with pytest.raises(UnsupportedVersionError, match="spec_version must be an integer"):
+        migrations.upgrade({"schema_version": 1})
+    stale = Migrations("spec", current=2, key="spec_version")
+    stale.register(1, lambda doc: doc)
+    with pytest.raises(UnsupportedVersionError, match="did not set version 2"):
+        stale.upgrade({"spec_version": 1})
+
+
 def test_future_config_version_refused(roots: Roots) -> None:
     """A configuration newer than the code is refused (Y8)."""
     future = f"= {CONFIG_MIGRATIONS.current + 1}"

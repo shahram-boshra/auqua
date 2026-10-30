@@ -16,11 +16,16 @@ The value is rounded once to the base currency's minor units (``HALF_EVEN``)
 and returned with the rate, its unit, source and availability as a
 :class:`~auqua.contracts.portfolio.Conversion`. Without a usable rate the
 result is ``None``: unavailable, never estimated.
+
+:func:`latest_close` is the one rule for "the latest available price" of an
+instrument (BP6 amendment 10, F-Y), used by the conversion from a traded pair,
+the account view's marks and allocation.
 """
 
 from decimal import Decimal
 
 from auqua.config.portfolio import PortfolioConfig
+from auqua.contracts.events.market import Bar
 from auqua.contracts.identity import InstrumentId, SeriesId
 from auqua.contracts.instruments import CryptoSpot
 from auqua.contracts.numeric import Rounding, divide, exact, quantize
@@ -28,6 +33,28 @@ from auqua.contracts.portfolio import BASE_CURRENCY, Conversion
 from auqua.portfolio.errors import ConfigurationError
 from auqua.storage.marketview import MarketView, available_ns, released
 from auqua.storage.reference import ReferenceIndex
+
+
+def latest_close(
+    market: MarketView, instrument_id: InstrumentId, at_ns: int, known_ns: int
+) -> Bar | None:
+    """The bar with the latest available close of ``instrument_id`` at ``at_ns``, or ``None``.
+
+    Across the instrument's bar series, the last bar released at ``at_ns`` as
+    known at ``known_ns`` (ADR 0028); at equal availability the bar that started
+    last (the shortest interval ending then). A close that is not positive is
+    not a usable price: ``None`` (BP6 amendment 10, F-W, F-Y).
+    """
+    candidates = [
+        bars[-1]
+        for listed, interval in market.bar_series()
+        if listed == instrument_id
+        and (bars := list(released(market.bars(listed, interval, known_ns=known_ns), at_ns)))
+    ]
+    if not candidates:
+        return None
+    latest = max(candidates, key=lambda bar: (available_ns(bar), bar.start_ns))
+    return latest if latest.close > 0 else None
 
 
 class Valuation:
@@ -108,22 +135,8 @@ class Valuation:
             and instrument.quote_currency == BASE_CURRENCY
         ):
             return None
-        candidates = [
-            bars[-1]
-            for listed, interval in self._market.bar_series()
-            if listed == instrument_id
-            and (
-                bars := list(
-                    released(self._market.bars(listed, interval, known_ns=known_ns), at_ns)
-                )
-            )
-        ]
-        if not candidates:
-            return None
-        # The latest information: the last available close; at equal availability the
-        # bar that started last (the shortest interval ending then).
-        latest = max(candidates, key=lambda bar: (available_ns(bar), bar.start_ns))
-        if latest.close <= 0:
+        latest = latest_close(self._market, instrument_id, at_ns, known_ns)
+        if latest is None:
             return None
         unit = f"{BASE_CURRENCY} per {currency}"
         value = self._times(amount, latest.close)

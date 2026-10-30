@@ -31,6 +31,7 @@ from decimal import Decimal
 from statistics import NormalDist
 
 from auqua.contracts.numeric import arithmetic
+from auqua.portfolio.series import SeriesError, simple_returns
 
 EULER_MASCHERONI = 0.5772156649015329
 _NORMAL = NormalDist()
@@ -43,18 +44,16 @@ class StatisticsError(ValueError):
 def returns(equity: Sequence[Decimal]) -> list[float]:
     """Per-period simple returns of an equity series: the Decimal-to-float boundary.
 
+    Delegates to :func:`auqua.portfolio.series.simple_returns` (BP6 F-A: one
+    implementation, shared with allocation).
+
     Raises:
         StatisticsError: fewer than two values or a non-positive equity.
     """
-    if len(equity) < 2:  # noqa: PLR2004 - a return needs two values
-        raise StatisticsError("returns need at least two equity values")
-    out: list[float] = []
-    with arithmetic():
-        for previous, current in itertools.pairwise(equity):
-            if previous <= 0:
-                raise StatisticsError(f"equity {previous} is not positive")
-            out.append(float((current - previous) / previous))
-    return out
+    try:
+        return simple_returns(equity)
+    except SeriesError as error:
+        raise StatisticsError(str(error)) from error
 
 
 @dataclass(frozen=True)

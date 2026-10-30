@@ -50,9 +50,11 @@ from auqua.contracts.events.market import Bar
 from auqua.contracts.events.research import Period, PeriodName, RunStartedV2, Trial
 from auqua.contracts.events.trading import Fill
 from auqua.contracts.identity import InstrumentId
-from auqua.contracts.instruments import AnyInstrument, AssetClass
+from auqua.contracts.instruments import AnyInstrument
 from auqua.contracts.numeric import arithmetic
 from auqua.execution.costs import FixedBps
+from auqua.portfolio.allocation import FixedQuantitySpec
+from auqua.portfolio.series import daily_last, periods_per_year
 from auqua.risk.gate import TradingLimits
 from auqua.storage.eventlog import EventLog
 from auqua.storage.marketview import available_ns
@@ -60,11 +62,8 @@ from auqua.storage.replay import EventLogReader
 
 _HALF = Decimal("0.5")
 _DOUBLE = Decimal(2)
-_NS_PER_DAY = 86_400 * 1_000_000_000
 #: Run-id component of test evaluations (SHA-256 of the text "test-evaluation").
 TEST_EVALUATION = hashlib.sha256(b"test-evaluation").hexdigest()
-CALENDAR_DAYS = 365
-BUSINESS_DAYS = 252
 
 
 class ExperimentError(ValueError):
@@ -129,6 +128,19 @@ class Candidate:
 
 
 def _configuration(spec: ExperimentSpec, fast: int, slow: int, delay: int = 0) -> str:
+    """Trial configuration hash; for ``fixed_quantity`` the keys of BP5 (T15), unchanged."""
+    allocation = spec.allocation
+    sizing: dict[str, str | int]
+    if isinstance(allocation, FixedQuantitySpec):
+        sizing = {"quantity": str(allocation.quantity)}
+    else:
+        sizing = {
+            "allocation": allocation.method,
+            "target_volatility": str(allocation.target_volatility),
+            "leverage_cap": str(allocation.leverage_cap),
+            "half_life_days": allocation.half_life_days,
+            "warmup_days": allocation.warmup_days,
+        }
     return config_hash(
         {
             "provider": spec.signal.provider,
@@ -137,16 +149,30 @@ def _configuration(spec: ExperimentSpec, fast: int, slow: int, delay: int = 0) -
             "fee_bps": str(spec.fee_bps),
             "slippage_bps": str(spec.slippage_bps),
             "delay_bars": delay,
-            "quantity": str(spec.quantity),
         }
+        | sizing
     )
+
+
+def _fixed_quantity(spec: ExperimentSpec) -> Decimal:
+    """The fixed quantity; ``volatility_target`` needs the account view, wired in BP6 S11.
+
+    Raises:
+        ExperimentError: the allocation is not ``fixed_quantity``.
+    """
+    allocation = spec.allocation
+    if not isinstance(allocation, FixedQuantitySpec):
+        raise ExperimentError(
+            f"allocation {allocation.method!r} is not run before BP6 S11 (amendment 10, F-Z)"
+        )
+    return allocation.quantity
 
 
 def _settings(
     spec: ExperimentSpec, limits: TradingLimits, factor: Decimal = Decimal(1)
 ) -> Settings:
     costs = FixedBps(spec.fee_bps, spec.slippage_bps, spec.fee_increment).scaled(factor)
-    return Settings(spec.quantity, spec.initial_cash, costs, limits)
+    return Settings(_fixed_quantity(spec), spec.initial_cash, costs, limits)
 
 
 def _simulate(  # noqa: PLR0913 - one simulation's inputs
@@ -253,16 +279,16 @@ def _snapshot(
 
 
 def _daily(series: Series, period: Period) -> list[float]:
-    by_day: dict[int, Decimal] = {}
-    first: Decimal | None = None
-    for index, t in enumerate(series.times):
-        if _inside(t, period):
-            if first is None:
-                first = series.equity[index]
-            by_day[t // _NS_PER_DAY] = series.equity[index + 1]
-    if first is None or len(by_day) < 3:  # noqa: PLR2004 - two daily returns at least
+    """Daily returns in ``period``: equity dated by the availability of its bar (BP6 F-V)."""
+    inside = [index for index, t in enumerate(series.times) if _inside(t, period)]
+    if not inside:
         return []
-    return stats.returns([first, *by_day.values()])
+    days = daily_last(
+        [series.times[index] for index in inside], [series.equity[index + 1] for index in inside]
+    )
+    if len(days) < 3:  # noqa: PLR2004 - two daily returns at least
+        return []
+    return stats.returns([series.equity[inside[0]], *(value for _, value in days)])
 
 
 def _selection_validation(
@@ -340,6 +366,7 @@ def run_experiment(  # noqa: PLR0913, PLR0915 - the steps of the module docstrin
     """
     if str(instrument.id) != spec.instrument_id:
         raise ExperimentError(f"spec is for {spec.instrument_id}, not {instrument.id}")
+    _fixed_quantity(spec)
     code = code or current_code_id()
     inputs = _snapshot(reader, spec, loaded, input_records)
     train, validation, _ = spec.periods()
@@ -532,7 +559,7 @@ def _selected_metrics(  # noqa: PLR0913 - the metrics' inputs
     except stats.StatisticsError as error:
         out["statistics_note"] = str(error)
     daily = _daily(c.series, validation)
-    year = CALENDAR_DAYS if instrument.asset_class is AssetClass.CRYPTO else BUSINESS_DAYS
+    year = periods_per_year(instrument.asset_class)
     try:
         out["annualised_sharpe_daily_lo"] = stats.annualised_sharpe(daily, year) if daily else None
     except stats.StatisticsError as error:
@@ -579,6 +606,7 @@ def evaluate_test(  # noqa: PLR0913 - the experiment plus the configuration to t
     """
     if configuration not in spec.signal.configurations():
         raise ExperimentError(f"{configuration} is not in the grid")
+    _fixed_quantity(spec)
     code = code or current_code_id()
     inputs = _snapshot(reader, spec, loaded, input_records)
     train, _, test = spec.periods()

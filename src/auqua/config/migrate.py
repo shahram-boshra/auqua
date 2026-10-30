@@ -4,7 +4,9 @@
 
 Each migration turns a version-N document into a version-N+1 document. A
 document is migrated step by step to the current version; a version without a
-path (including any version newer than the code) is refused.
+path (including any version newer than the code) is refused. The version is
+read from :data:`VERSION_KEY` unless a registry names another key (the
+experiment specification's ``spec_version``, BP6 amendment 10).
 """
 
 from collections.abc import Callable
@@ -20,10 +22,14 @@ VERSION_KEY = "schema_version"
 class Migrations:
     """Registry of migrations for one kind of file."""
 
-    def __init__(self, kind: str, current: int) -> None:
-        """Create an empty registry for ``kind`` whose current version is ``current``."""
+    def __init__(self, kind: str, current: int, *, key: str = VERSION_KEY) -> None:
+        """Create an empty registry for ``kind`` whose current version is ``current``.
+
+        ``key`` is the document field that holds the version.
+        """
         self.kind = kind
         self.current = current
+        self.key = key
         self._steps: dict[int, Migration] = {}
 
     def register(self, from_version: int, migration: Migration) -> None:
@@ -43,9 +49,9 @@ class Migrations:
             UnsupportedVersionError: the version is missing, not an integer, or
                 has no path to the current version.
         """
-        version = document.get(VERSION_KEY)
+        version = document.get(self.key)
         if type(version) is not int:
-            raise UnsupportedVersionError(f"{self.kind}: {VERSION_KEY} must be an integer")
+            raise UnsupportedVersionError(f"{self.kind}: {self.key} must be an integer")
         while version != self.current:
             step = self._steps.get(version)
             if step is None:
@@ -54,7 +60,7 @@ class Migrations:
                 )
             document = step(document)
             version += 1
-            if document.get(VERSION_KEY) != version:
+            if document.get(self.key) != version:
                 raise UnsupportedVersionError(
                     f"{self.kind}: migration from {version - 1} did not set version {version}"
                 )

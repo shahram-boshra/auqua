@@ -291,7 +291,7 @@ def build_report(r: ReportInputs) -> dict[str, Any]:
             "fee_bps": str(r.spec.fee_bps),
             "slippage_bps": str(r.spec.slippage_bps),
             "fill": "next bar open",
-            "quantity": str(r.spec.quantity),
+            **r.spec.allocation.assumptions(),
             "initial_cash": str(r.spec.initial_cash),
             "dsr_threshold": str(r.spec.dsr_threshold),
         },
