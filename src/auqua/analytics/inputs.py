@@ -11,18 +11,26 @@ must have a source profile, be cleared for the operator's jurisdiction and
 permit backtests (ADRs 0027-0029); the snapshot records, per source, its
 terms, use class, jurisdiction and availability basis as the ingestion runs
 recorded them, and a digest of their raw files.
+
+The snapshot also carries what the run's account reads (BP6 amendment 12,
+F-AG): a :class:`~auqua.storage.marketview.MarketView` of the selected bar
+series only — plus, when the run needs USD rates, the rate series or traded
+pairs named for those currencies, whose sources pass the same checks and are
+recorded among the inputs — and the instrument index of the snapshot.
 """
 
 import hashlib
 from collections import Counter, defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from auqua.config.ingestion import IngestionConfig
+from auqua.config.portfolio import RateSource
 from auqua.contracts.events.base import Event, LogRecord
 from auqua.contracts.events.ingest import DataGap, IngestRun, RunOutcome
-from auqua.contracts.events.market import Bar
+from auqua.contracts.events.market import Bar, ReferenceRate
 from auqua.contracts.events.research import InputRef
-from auqua.contracts.identity import InstrumentId
+from auqua.contracts.identity import InstrumentId, SeriesId
 from auqua.ingestion.sources import (
     PROFILES_BY_EVENT_SOURCE,
     Purpose,
@@ -31,6 +39,7 @@ from auqua.ingestion.sources import (
 )
 from auqua.storage.eventlog import Head
 from auqua.storage.marketview import MarketView
+from auqua.storage.reference import ReferenceIndex
 from auqua.storage.replay import EventLogReader
 
 UNRECORDED = "unrecorded"
@@ -52,6 +61,8 @@ class InputSnapshot:
         inputs: One reference per input source.
         profiles: The source profiles of the inputs.
         gaps: Recorded gaps of the series.
+        market: The selected series and the requested rates, for the run's account.
+        reference: The instrument versions of the snapshot.
     """
 
     head: Head
@@ -61,6 +72,37 @@ class InputSnapshot:
     inputs: tuple[InputRef, ...]
     profiles: tuple[SourceProfile, ...]
     gaps: tuple[DataGap, ...]
+    market: MarketView
+    reference: ReferenceIndex
+
+
+def _profiles(sources: list[str], config: IngestionConfig, purpose: Purpose) -> list[SourceProfile]:
+    """The profile of each source, each usable for ``purpose`` (ADRs 0027-0029)."""
+    profiles = []
+    for source in sources:
+        profile = PROFILES_BY_EVENT_SOURCE.get(source)
+        if profile is None:
+            raise InputError(f"records from {source!r} have no source profile")
+        require_usable(profile, config, purpose)
+        profiles.append(profile)
+    return profiles
+
+
+def _rate_records(
+    records: list[LogRecord[Event]], rates: Mapping[str, RateSource], traded: InstrumentId
+) -> list[LogRecord[Event]]:
+    """Records of the rate series and traded pairs named in ``rates`` (not the traded series)."""
+    series = {SeriesId.parse(r.series) for r in rates.values() if r.series is not None}
+    pairs = {InstrumentId.parse(r.instrument) for r in rates.values() if r.instrument is not None}
+    pairs.discard(traded)
+    out = []
+    for record in records:
+        event = record.event
+        if (isinstance(event, ReferenceRate) and event.series_id in series) or (
+            isinstance(event, Bar) and event.instrument_id in pairs
+        ):
+            out.append(record)
+    return out
 
 
 def _records(reader: EventLogReader, head: Head) -> list[LogRecord[Event]]:
@@ -107,12 +149,15 @@ def snapshot(  # noqa: PLR0913 - every argument narrows the series
     event_source: str | None = None,
     purpose: Purpose = Purpose.BACKTEST,
     input_records: int | None = None,
+    rates: Mapping[str, RateSource] | None = None,
 ) -> InputSnapshot:
     """The point-in-time snapshot of one bar series of ``instrument_id``.
 
     ``input_records`` pins the snapshot to the first records of the log (the
     ``input_next_sequence`` of an earlier run); records appended later, such
-    as corrections, are invisible to it.
+    as corrections, are invisible to it. ``rates`` names the USD rate sources
+    the run reads (currency → source); their records join the run's market
+    view and their sources the inputs.
 
     Raises:
         InputError: no bars, several intervals without ``interval_ns``, several
@@ -142,13 +187,17 @@ def snapshot(  # noqa: PLR0913 - every argument narrows the series
     elif len(sources) > 1:
         raise InputError(f"{instrument_id}: bars from {sources}; name one source")
     used = sorted({bar.source for bar in bars})
-    profiles = []
-    for source in used:
-        profile = PROFILES_BY_EVENT_SOURCE.get(source)
-        if profile is None:
-            raise InputError(f"bars from {source!r} have no source profile")
-        require_usable(profile, config, purpose)
-        profiles.append(profile)
+    selected = [
+        record
+        for record in records
+        if isinstance(record.event, Bar)
+        and record.event.instrument_id == instrument_id
+        and record.event.interval_ns == interval_ns
+        and record.event.source in used
+    ]
+    rate_records = _rate_records(records, rates or {}, instrument_id)
+    rate_sources = sorted({r.event.source for r in rate_records} - set(used))
+    profiles = _profiles([*used, *rate_sources], config, purpose)
     runs: dict[str, list[IngestRun]] = defaultdict(list)
     gaps: list[DataGap] = []
     for record in records:
@@ -163,11 +212,21 @@ def snapshot(  # noqa: PLR0913 - every argument narrows the series
         ):
             gaps.append(event)
     per_source = Counter(bar.source for bar in bars)
+    per_source.update(r.event.source for r in rate_records if isinstance(r.event, Bar))
     gap_count = Counter(gap.source for gap in gaps)
     inputs = tuple(
         _input_ref(p, runs[p.name], per_source[p.event_source], gap_count[p.event_source])
         for p in profiles
     )
+    reference = ReferenceIndex.from_records(records)
     return InputSnapshot(
-        head, knowledge_ns, interval_ns, tuple(bars), inputs, tuple(profiles), tuple(gaps)
+        head,
+        knowledge_ns,
+        interval_ns,
+        tuple(bars),
+        inputs,
+        tuple(profiles),
+        tuple(gaps),
+        MarketView([*selected, *rate_records]),
+        reference,
     )

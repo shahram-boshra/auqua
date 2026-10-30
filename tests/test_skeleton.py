@@ -21,15 +21,21 @@ from auqua.alpha.baseline import MovingAverageCrossover
 from auqua.analytics.backtest import (
     BacktestResult,
     BacktestSpec,
-    replay_book,
+    replay_portfolio,
     report_data,
     run_backtest,
 )
+from auqua.analytics.engine import RunMarket, run_market
+from auqua.analytics.inputs import snapshot
 from auqua.analytics.lineage import code_id
 from auqua.config.base import Environment
 from auqua.config.loader import LoadedConfig, load
-from auqua.contracts.events.base import Event
+from auqua.config.portfolio import PortfolioConfig
+from auqua.contracts.codec import encode
+from auqua.contracts.events.account import CashTransfer
+from auqua.contracts.events.base import Event, LogRecord
 from auqua.contracts.events.market import Bar
+from auqua.contracts.events.reference import InstrumentDefined
 from auqua.contracts.events.research import RunStartedV2
 from auqua.contracts.events.trading import (
     Fill,
@@ -42,12 +48,17 @@ from auqua.contracts.events.trading import (
 )
 from auqua.contracts.identity import InstrumentId, derived_id
 from auqua.contracts.instruments import CryptoSpot, Identifiers
+from auqua.contracts.numeric import exact
 from auqua.execution.costs import FixedBps
 from auqua.execution.simulated import SimulatedVenue
 from auqua.ingestion.parsers.binance_vision_klines import KlineFormatError, TimeUnit, read_klines
-from auqua.portfolio.book import Book
+from auqua.portfolio.account import Portfolio
+from auqua.portfolio.errors import PortfolioError
 from auqua.risk.gate import MAX_ORDER_NOTIONAL, MAX_POSITION, PreTradeGate, TradingLimits
+from auqua.storage.chain import GENESIS, record_hash
 from auqua.storage.eventlog import EventLog
+from auqua.storage.marketview import MarketView
+from auqua.storage.reference import ReferenceIndex
 from auqua.storage.replay import EventLogReader
 from auqua.visualization.report import ReportData, ReportRow, render, write_report
 
@@ -118,7 +129,27 @@ environment = "research"
 [paths]
 data_root = "{data}"
 output_root = "{output}"
+
+[portfolio.currencies.USD]
+kind = "fiat"
+minor_units = 2
+source = "ISO 4217 List One (SIX)"
+read_on = 2026-10-30
+
+[portfolio.currencies.SYN]
+kind = "crypto"
+minor_units = 8
+source = "test fixture: the fictional SYN asset"
+read_on = 2026-10-30
 """
+#: The instrument's definition, first in the input log (the run's instrument index).
+DEFINED = InstrumentDefined(
+    id=uuid.UUID(int=7),
+    source="ingest/synthetic",
+    ts_event_ns=0,
+    ts_ingest_ns=0,
+    instrument=INSTRUMENT,
+)
 LIMITS = """\
 schema_version = 1
 environment = "research"
@@ -182,13 +213,19 @@ def _setup(root: Path, notional: str = "1000000.00") -> Setup:
         clock=SteppingClock(1_760_000_000_000_000_000),
     )
     with EventLog(input_log, ENV, busy_timeout_ms=TIMEOUT_MS) as log:
-        assert log.append(bars).appended == BARS
+        assert log.append([DEFINED, *bars]).appended == BARS + 1
     return Setup(loaded, input_log)
 
 
 def _run(setup: Setup, spec: BacktestSpec = SPEC) -> BacktestResult:
     with EventLogReader(setup.input_log, ENV, busy_timeout_ms=TIMEOUT_MS) as reader:
         return run_backtest(reader, INSTRUMENT, spec, setup.loaded)
+
+
+def _market(setup: Setup) -> RunMarket:
+    with EventLogReader(setup.input_log, ENV, busy_timeout_ms=TIMEOUT_MS) as reader:
+        inputs = snapshot(reader, INSTRUMENT.id, setup.loaded.config.ingestion)
+    return run_market(setup.loaded.config.portfolio, inputs, INSTRUMENT)
 
 
 def _of[E: Event](events: list[Event], kind: type[E]) -> list[E]:
@@ -212,21 +249,19 @@ def test_replay_reproduces_identical_orders_and_pnl(setup: Setup) -> None:
     assert first.run_id == second.run_id
     assert first.events == second.events
     assert (second.appended, second.duplicates) == (0, len(first.events) + 1)
-    assert (first.equity, first.book.realized, first.book.fees) == (
-        second.equity,
-        second.book.realized,
-        second.book.fees,
-    )
+    assert (first.equity, first.portfolio.postings) == (second.equity, second.portfolio.postings)
     with EventLogReader(first.run_log, ENV, busy_timeout_ms=TIMEOUT_MS) as reader:
         reader.verify()
-        replayed = replay_book(reader, SPEC.initial_cash)
-    assert (replayed.cash, replayed.position, replayed.realized, replayed.fees) == (
-        first.book.cash,
-        first.book.position,
-        first.book.realized,
-        first.book.fees,
-    )
-    assert replayed.equity(first.final_mark) == first.equity
+        replayed = replay_portfolio(reader, _market(setup))
+    assert replayed.postings == first.portfolio.postings
+    assert replayed.balances() == first.portfolio.balances()
+    assert replayed.quantity(INSTRUMENT.id) == first.portfolio.quantity(INSTRUMENT.id)
+    realized = replayed.realized(INSTRUMENT.id, "USD")
+    assert realized == first.portfolio.realized(INSTRUMENT.id, "USD")
+    assert not realized.is_zero()
+    with exact():
+        equity = replayed.balance("USD").cash + replayed.balance("SYN").cash * first.final_mark
+    assert equity == first.equity
     other = _run(setup, SPEC.model_copy(update={"fast_window": 10}))
     assert other.run_id != first.run_id
     assert other.run_log != first.run_log
@@ -243,7 +278,8 @@ def test_order_breaching_a_limit_is_rejected(tmp_path: Path) -> None:
     assert all(not d.accepted and d.rule == MAX_ORDER_NOTIONAL for d in decisions)
     assert all(d.limit == Decimal(100) and d.value is not None for d in decisions)
     assert not _of(result.events, Fill)
-    assert (result.book.cash, result.book.position) == (SPEC.initial_cash, Decimal(0))
+    cash = result.portfolio.balance("USD").cash
+    assert (cash, result.portfolio.quantity(INSTRUMENT.id)) == (SPEC.initial_cash, Decimal(0))
 
 
 # Exit criterion 3: every order traces to signal, data, configuration and code ---------------
@@ -448,20 +484,44 @@ def _fill(side: Side, price: str, quantity: str, fee: str = "0") -> Fill:
     )
 
 
-def test_book_fifo_pnl_and_no_shorts() -> None:
-    """FIFO realized P&L is exact; fees come out of cash; shorts are refused."""
-    book = Book(cash=Decimal(1000))
-    book.apply(_fill(Side.BUY, "10", "1", "0.01"))
-    book.apply(_fill(Side.BUY, "12", "1"))
-    book.apply(_fill(Side.SELL, "15", "1.5", "0.02"))
-    assert book.realized == Decimal("5") + Decimal("1.5")  # (15-10)*1 + (15-12)*0.5
-    assert book.position == Decimal("0.5")
-    assert book.cash == Decimal(1000) - 10 - Decimal("0.01") - 12 + Decimal("22.5") - Decimal(
-        "0.02"
+def test_account_fifo_pnl_and_no_shorts() -> None:
+    """FIFO realized P&L is exact; fees come out of cash; shorts are refused (BP6 S11)."""
+    config = PortfolioConfig.model_validate(
+        {"currencies": {"USD": _currency("fiat", 2), "SYN": _currency("crypto", 8)}},
+        strict=False,
     )
-    assert book.equity(Decimal(20)) == book.cash + 10
-    with pytest.raises(ValueError, match="exceeds position"):
-        book.apply(_fill(Side.SELL, "15", "1"))
+    account = Portfolio(config, MarketView([]), ReferenceIndex())
+    fund = CashTransfer(
+        id=uuid.UUID(int=1),
+        source="research/backtest",
+        ts_event_ns=0,
+        ts_ingest_ns=0,
+        currency="USD",
+        amount=Decimal(1000),
+        reference="initial_cash",
+    )
+    previous = GENESIS
+    events: list[Event] = [
+        DEFINED,
+        fund,
+        _fill(Side.BUY, "10", "1", "0.01"),
+        _fill(Side.BUY, "12", "1"),
+        _fill(Side.SELL, "15", "1.5", "0.02"),
+    ]
+    for sequence, event in enumerate(events):
+        previous = record_hash(previous, sequence, encode(event))
+        account.apply(LogRecord(sequence=sequence, event=event), previous)
+    assert account.realized(INSTRUMENT.id, "USD") == Decimal("6.5")  # (15-10)*1 + (15-12)*0.5
+    assert account.balance("SYN").cash == Decimal("0.5")
+    assert account.balance("USD").cash == Decimal("1000.47")  # 1000 - 10.01 - 12 + 22.48
+    oversold = _fill(Side.SELL, "15", "1")
+    digest = record_hash(previous, len(events), encode(oversold))
+    with pytest.raises(PortfolioError, match=r"0\.5 held"):
+        account.apply(LogRecord(sequence=len(events), event=oversold), digest)
+
+
+def _currency(kind: str, minor_units: int) -> dict[str, object]:
+    return {"kind": kind, "minor_units": minor_units, "source": "test", "read_on": "2026-10-30"}
 
 
 def test_gate_rules_in_order() -> None:

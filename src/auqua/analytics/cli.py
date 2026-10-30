@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from auqua.analytics.engine import EngineError
 from auqua.analytics.experiment import ExperimentError, evaluate_test, run_experiment
 from auqua.analytics.inputs import InputError
 from auqua.analytics.spec import ExperimentSpec
@@ -30,6 +31,7 @@ from auqua.config.tomlfile import read_toml
 from auqua.contracts.identity import InstrumentId
 from auqua.contracts.instruments import AnyInstrument
 from auqua.ingestion.errors import IngestionError
+from auqua.portfolio.errors import PortfolioError
 from auqua.risk.gate import TradingLimits
 from auqua.storage.errors import StorageError
 from auqua.storage.reference import ReferenceIndex
@@ -123,7 +125,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 _print_report(done.report_json, root, done.report)
     except (ConfigError, StorageError, OSError, CliError, IngestionError, InputError,
-            ExperimentError) as error:  # fmt: skip
+            ExperimentError, EngineError, PortfolioError) as error:  # fmt: skip
         sys.stderr.write(f"error: {type(error).__name__}: {error}\n")
         return 1
     return 0

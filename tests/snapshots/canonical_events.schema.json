@@ -2901,11 +2901,22 @@
     },
     "Target": {
       "additionalProperties": false,
-      "description": "Target position (signed quantity) for one instrument.",
+      "description": "Target position (signed quantity) for one instrument.\n\n``conversion`` is the rate's conversion an allocator used to value one unit\nin USD (BP6 section 4.9: recorded for audit, its rounded value unused). Added\nwithin version 1 under Rule W (BP6 amendment 11): absent, it is not encoded,\nso stored targets keep their bytes.",
       "properties": {
         "causation_id": {
           "format": "uuid",
           "type": "string"
+        },
+        "conversion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Conversion"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "id": {
           "format": "uuid",

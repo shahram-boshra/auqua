@@ -94,6 +94,7 @@ from auqua.contracts.numeric import exact
 from auqua.contracts.portfolio import (
     BASE_CURRENCY,
     AccountView,
+    Balance,
     Conversion,
     LogPosition,
     PositionView,
@@ -200,6 +201,7 @@ class PortfolioState:
     delisted: tuple[InstrumentId, ...]
     results: tuple[ReconciliationResult, ...]
     derived: tuple[Event, ...]
+    realized: tuple[tuple[InstrumentId, str, Decimal], ...] = ()
 
 
 class Portfolio:
@@ -210,13 +212,17 @@ class Portfolio:
         config: PortfolioConfig,
         market: MarketView,
         reference: ReferenceIndex | None = None,
+        *,
+        knowledge_ns: int | None = None,
     ) -> None:
         """Start an empty account; ``market`` supplies point-in-time bars and rates.
 
         ``reference`` holds the instrument versions already in the log before
         the first record this fold applies (a resumed fold; amendment 8, F-T);
-        the fold adds the versions it reads. Versions are always looked up as
-        known at the fold's clock.
+        the fold adds the versions it reads. Bars, rates and instrument versions
+        are looked up as known at ``knowledge_ns`` when given — a backtest
+        passes its input snapshot's knowledge time — else at the fold's clock
+        (live; amendment 12, F-AB); release stays at the fold's time (ADR 0028).
 
         Raises:
             ConfigurationError: USD is not among the configured currencies.
@@ -240,6 +246,12 @@ class Portfolio:
         self._derived: dict[uuid.UUID, Event] = {}
         self._position = LogPosition(next_sequence=0, hash=GENESIS.hex())
         self._order = 0
+        self._knowledge_ns = knowledge_ns
+        self._realized: dict[tuple[InstrumentId, str], Decimal] = {}
+
+    def _known(self, now: int) -> int:
+        """The knowledge time of lookups made at ``now`` (amendment 12, F-AB)."""
+        return now if self._knowledge_ns is None else self._knowledge_ns
 
     # --- state ---------------------------------------------------------------------------------
     def state(self) -> PortfolioState:
@@ -271,6 +283,12 @@ class Portfolio:
             delisted=tuple(sorted(self._delisted, key=str)),
             results=self._reconciler.results,
             derived=tuple(self._derived.values()),
+            realized=tuple(
+                (i, currency, amount)
+                for (i, currency), amount in sorted(
+                    self._realized.items(), key=lambda item: (str(item[0][0]), item[0][1])
+                )
+            ),
         )
 
     @classmethod
@@ -280,6 +298,8 @@ class Portfolio:
         market: MarketView,
         reference: ReferenceIndex,
         state: PortfolioState,
+        *,
+        knowledge_ns: int | None = None,
     ) -> Portfolio:
         """A fold that continues from ``state`` (a validated projection; amendment 8).
 
@@ -287,7 +307,7 @@ class Portfolio:
             PortfolioError: the state is inconsistent (its postings, lots or
                 results do not replay).
         """
-        portfolio = cls(config, market, reference)
+        portfolio = cls(config, market, reference, knowledge_ns=knowledge_ns)
         portfolio._clock = LogClock(state.clock_ns)
         portfolio._position = state.log_position
         portfolio._order = state.order
@@ -308,6 +328,7 @@ class Portfolio:
         portfolio._delisted = set(state.delisted)
         portfolio._reconciler = Reconciler(state.results)
         portfolio._derived = {event.id: event for event in state.derived}
+        portfolio._realized = {(i, currency): amount for i, currency, amount in state.realized}
         return portfolio
 
     # --- folding -------------------------------------------------------------------------------
@@ -324,6 +345,61 @@ class Portfolio:
     def lots(self, instrument_id: InstrumentId) -> Lots | None:
         """The lots of ``instrument_id``, if any were opened."""
         return self._lots.get(instrument_id)
+
+    def balance(self, currency: str) -> Balance:
+        """Cash and receivable of ``currency`` (zero if nothing was posted)."""
+        return self._ledger.balance(currency)
+
+    def balances(self) -> tuple[Balance, ...]:
+        """Every currency with a posting, in increasing code order."""
+        return self._ledger.balances()
+
+    def amounts(self, currency: str) -> tuple[Decimal, Decimal]:
+        """Cash and receivable of ``currency`` (zero if nothing was posted), without a struct."""
+        return self._ledger.amounts(currency)
+
+    def currencies_held(self) -> frozenset[str]:
+        """Currencies with a non-zero cash or receivable balance."""
+        return self._ledger.currencies_held()
+
+    def quantity(self, instrument_id: InstrumentId) -> Decimal:
+        """The filled position of ``instrument_id``, signed (zero if none)."""
+        return self._quantity(instrument_id)
+
+    def realized(self, instrument_id: InstrumentId, currency: str) -> Decimal:
+        """Realized P&L of ``instrument_id`` in ``currency``, exact (amendment 12, F-AF).
+
+        Proceeds minus the FIFO cost relieved by fills (and physical deliveries)
+        of spot pairs, equities, options and bonds; for inverse perpetuals the
+        coin P&L posted as ``realized``. Futures realize through their daily
+        variation postings; lifecycle closes (an option's exercise or expiry,
+        a delisting) relieve no lots by trade and add nothing here.
+        """
+        return self._realized.get((instrument_id, currency), Decimal(0))
+
+    def _realize(self, instrument_id: InstrumentId, currency: str, amount: Decimal) -> None:
+        if amount.is_zero():
+            return
+        key = (instrument_id, currency)
+        with exact():
+            self._realized[key] = self._realized.get(key, Decimal(0)) + amount
+
+    def _trade(
+        self,
+        lots: Lots,
+        instrument_id: InstrumentId,
+        currency: str,
+        quantity: Decimal,
+        price: Decimal,
+    ) -> None:
+        """Trade ``lots`` and realize proceeds - relieved cost of the lots it relieves."""
+        facing = lots.direction
+        result = lots.trade(quantity, price)
+        if result.relieved:
+            with exact():
+                proceeds = result.relieved_quantity * price
+                amount = (proceeds - result.relieved_cost) * facing
+            self._realize(instrument_id, currency, amount)
 
     def apply(self, record: LogRecord[Event], record_hash: bytes) -> tuple[Event, ...]:
         """Fold ``record`` (with its chain hash) into the account; return the derived events.
@@ -405,7 +481,7 @@ class Portfolio:
     def _version[I: AnyInstrument](
         self, instrument_id: InstrumentId, at_ns: int, now: int, kind: type[I]
     ) -> I:
-        instrument = self._reference.as_of(instrument_id, at_ns, now)
+        instrument = self._reference.as_of(instrument_id, at_ns, self._known(now))
         if not isinstance(instrument, kind):
             raise PortfolioError(f"{instrument_id} is not a {kind.__name__} in effect at {at_ns}")
         return instrument
@@ -449,14 +525,14 @@ class Portfolio:
 
     # --- fills ----------------------------------------------------------------------------------
     def _fill(self, fill: Fill, now: int) -> None:
-        instrument = self._reference.as_of(fill.instrument_id, fill.ts_event_ns, now)
+        instrument = self._reference.as_of(fill.instrument_id, fill.ts_event_ns, self._known(now))
         if instrument is None:
             raise PortfolioError(f"fill {fill.id}: {fill.instrument_id} not in effect")
         quantity = signed_quantity(fill)
         if isinstance(instrument, (CryptoSpot, FxPair)):
             lots = self._lots_of(instrument, instrument.quote_currency)
             self._post(spot_fill_postings(fill, instrument, self._account, lots.position))
-            lots.trade(quantity, fill.price)
+            self._trade(lots, instrument.id, instrument.quote_currency, quantity, fill.price)
             if isinstance(instrument, FxPair):
                 self._pending_fx.append(pending_fx(fill, instrument))
         elif isinstance(instrument, (Equity, Bond)):
@@ -500,7 +576,8 @@ class Portfolio:
         """Lots at the value of one unit (price x multiplier), so their cost is in cash."""
         with exact():
             unit_value = price * instrument.multiplier
-        self._lots_of(instrument, instrument.quote_currency).trade(quantity, unit_value)
+        lots = self._lots_of(instrument, instrument.quote_currency)
+        self._trade(lots, instrument.id, instrument.quote_currency, quantity, unit_value)
 
     def _future_fill(self, future: Future, fill: Fill) -> None:
         entry = self._futures_entry(future.id)
@@ -539,6 +616,7 @@ class Portfolio:
             with exact():
                 total += pnl
         if not total.is_zero():
+            self._realize(swap.id, swap.settlement_currency, total)
             self._ledger.post(
                 Posting(
                     self._account, swap.settlement_currency, total, PostingKind.REALIZED, fill.id
@@ -616,7 +694,7 @@ class Portfolio:
                 f"{type(event).__name__} of {event.quantity} {option.id}, position {held}"
             )
         result = exercise_effect(
-            event, option, self._account, reference=self._reference, known_ns=now
+            event, option, self._account, reference=self._reference, known_ns=self._known(now)
         )
         self._post(result.postings)
         self._lots_of(option, option.quote_currency).trade(closing, Decimal(0))
@@ -625,7 +703,9 @@ class Portfolio:
         delivery = result.delivery
         if delivery is None:
             return
-        underlying = self._reference.as_of(delivery.instrument_id, event.ts_event_ns, now)
+        underlying = self._reference.as_of(
+            delivery.instrument_id, event.ts_event_ns, self._known(now)
+        )
         if isinstance(underlying, Equity):
             self._trade_at_value(underlying, delivery.quantity, delivery.price)
         elif isinstance(underlying, Future):
@@ -690,11 +770,11 @@ class Portfolio:
             if new_id in self._lots:
                 raise PortfolioError(f"symbol change into {new_id}, which already has lots")
             if instrument_id in self._lots:
-                at, known = action.effective_ns, self._clock.now_ns()
+                at, known = action.effective_ns, self._known(self._clock.now_ns())
                 old = self._reference.as_of(instrument_id, at, known)
                 if old is None:  # pragma: no cover - lots exist only for defined instruments
                     raise PortfolioError(f"symbol change of undefined {instrument_id}")
-                self._version(new_id, at, known, type(old))
+                self._version(new_id, at, self._clock.now_ns(), type(old))
                 self._lots[new_id] = self._lots.pop(instrument_id)
         elif action.kind is CorporateActionKind.DELISTING:
             self._delisted.add(instrument_id)
@@ -712,6 +792,7 @@ class Portfolio:
     def view(self, log_position: LogPosition | None = None) -> AccountView:
         """The account at the clock's time, as of ``log_position`` (default: the fold's)."""
         as_of = self._clock.now_ns()
+        known = self._known(as_of)
         balances = self._ledger.balances()
         equity: dict[str, Decimal | None] = {}
         for balance in balances:
@@ -723,12 +804,14 @@ class Portfolio:
         unmarked: list[InstrumentId] = []
         working = self._working_by_instrument()
         for instrument_id in sorted(set(self._lots) | set(working), key=str):
-            instrument = self._reference.as_of(instrument_id, as_of, as_of)
+            instrument = self._reference.as_of(instrument_id, as_of, known)
             if instrument is None:
                 raise PortfolioError(f"position or working order on undefined {instrument_id}")
             if self._quantity(instrument_id).is_zero() and instrument_id not in working:
                 continue
-            row = self._position_view(instrument, working.get(instrument_id, Decimal(0)), as_of)
+            row = self._position_view(
+                instrument, working.get(instrument_id, Decimal(0)), as_of, known
+            )
             positions.append(row.view)
             quantity = row.view.quantity
             if isinstance(instrument, (CryptoSpot, FxPair)) or quantity.is_zero():
@@ -746,7 +829,7 @@ class Portfolio:
             if entry is not None:
                 compared.setdefault(entry.currency, Decimal(0))
         margin, unmargined = margin_rows(self._margin, margined, compared)
-        conversions, unconverted, total = self._base_total(equity, as_of)
+        conversions, unconverted, total = self._base_total(equity, as_of, known)
         if unmarked:
             total = None
         return AccountView(
@@ -770,14 +853,16 @@ class Portfolio:
                 totals[instrument_id] = totals.get(instrument_id, Decimal(0)) + quantity
         return totals
 
-    def _position_view(self, instrument: AnyInstrument, working: Decimal, as_of: int) -> _Row:
+    def _position_view(
+        self, instrument: AnyInstrument, working: Decimal, as_of: int, known: int
+    ) -> _Row:
         quantity = self._quantity(instrument.id)
         currency = (
             instrument.settlement_currency
             if isinstance(instrument, PerpetualSwap)
             else instrument.quote_currency
         )
-        mark, mark_ns, unrealized, contribution = self._valued(instrument, quantity, as_of)
+        mark, mark_ns, unrealized, contribution = self._valued(instrument, quantity, as_of, known)
         if quantity.is_zero():
             mark = mark_ns = unrealized = None
             contribution = Decimal(0)
@@ -793,7 +878,7 @@ class Portfolio:
         return _Row(view, contribution)
 
     def _valued(
-        self, instrument: AnyInstrument, quantity: Decimal, as_of: int
+        self, instrument: AnyInstrument, quantity: Decimal, as_of: int, known: int
     ) -> tuple[Decimal | None, int | None, Decimal | None, Decimal | None]:
         """Mark, its availability, unrealized P&L and the contribution to equity."""
         if isinstance(instrument, Future):
@@ -811,7 +896,7 @@ class Portfolio:
         close = (
             None
             if instrument.id in self._delisted
-            else latest_close(self._market, instrument.id, as_of, as_of)
+            else latest_close(self._market, instrument.id, as_of, known)
         )
         if close is None:
             return None, None, None, None
@@ -837,7 +922,7 @@ class Portfolio:
         return mark, mark_ns, unrealized, value
 
     def _base_total(
-        self, equity: dict[str, Decimal | None], as_of: int
+        self, equity: dict[str, Decimal | None], as_of: int, known: int
     ) -> tuple[tuple[Conversion, ...], tuple[str, ...], Decimal | None]:
         conversions: list[Conversion] = []
         unconverted: list[str] = []
@@ -850,7 +935,7 @@ class Portfolio:
                 with exact():
                     total += amount
                 continue
-            conversion = self._valuation.convert(amount, currency, at_ns=as_of, known_ns=as_of)
+            conversion = self._valuation.convert(amount, currency, at_ns=as_of, known_ns=known)
             if conversion is None:
                 unconverted.append(currency)
                 continue

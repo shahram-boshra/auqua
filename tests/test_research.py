@@ -6,6 +6,7 @@ All bars are first-party synthetic data (a seeded random walk in whole ticks).
 """
 
 import ast
+import dataclasses
 import datetime
 import hashlib
 import json
@@ -25,7 +26,7 @@ from hypothesis import strategies as st
 
 from auqua.analytics import cli, integrity, stats
 from auqua.analytics import robustness as rb
-from auqua.analytics.engine import Settings, Simulation
+from auqua.analytics.engine import EngineError, RunMarket, Settings, Simulation
 from auqua.analytics.experiment import ExperimentError, evaluate_test, run_experiment
 from auqua.analytics.experiment import _configuration as configuration_hash
 from auqua.analytics.inputs import InputError, snapshot
@@ -34,20 +35,39 @@ from auqua.analytics.splits import SplitError, purged_kfold, walk_forward
 from auqua.analytics.trials import config_hash
 from auqua.config.base import Environment
 from auqua.config.loader import LoadedConfig, load
-from auqua.contracts.events.base import Event
-from auqua.contracts.events.market import Bar
+from auqua.config.portfolio import PortfolioConfig
+from auqua.contracts.events.account import CashTransfer
+from auqua.contracts.events.base import Event, LogRecord
+from auqua.contracts.events.market import Bar, ReferenceRate
 from auqua.contracts.events.reference import InstrumentDefined
 from auqua.contracts.events.research import RunStartedV2, Trial
-from auqua.contracts.events.trading import Fill, OrderSubmitted, OrderType, Side, Signal
-from auqua.contracts.identity import InstrumentId, derived_id
-from auqua.contracts.instruments import CryptoSpot, Identifiers
+from auqua.contracts.events.trading import (
+    AllocationUnavailable,
+    AllocationUnavailableReason,
+    Fill,
+    OrderSubmitted,
+    OrderType,
+    Side,
+    Signal,
+    Target,
+)
+from auqua.contracts.identity import InstrumentId, SeriesId, derived_id
+from auqua.contracts.instruments import (
+    CryptoSpot,
+    Equity,
+    Identifiers,
+    PerpetualSwap,
+    PerpetualType,
+)
 from auqua.execution.costs import FixedBps
 from auqua.execution.simulated import SimulatedVenue
 from auqua.ingestion.errors import NotEligibleError
 from auqua.portfolio.allocation import FixedQuantitySpec, VolatilityTargetSpec
+from auqua.portfolio.errors import ConfigurationError
 from auqua.risk.gate import TradingLimits
 from auqua.storage.eventlog import EventLog
-from auqua.storage.marketview import available_ns
+from auqua.storage.marketview import MarketView, available_ns
+from auqua.storage.reference import ReferenceIndex
 from auqua.storage.replay import EventLogReader
 
 ENV = Environment.RESEARCH
@@ -77,7 +97,39 @@ data_root = "{data}"
 output_root = "{output}"
 [ingestion]
 jurisdiction = "US"
+[portfolio.currencies.USD]
+kind = "fiat"
+minor_units = 2
+source = "ISO 4217 List One (SIX)"
+read_on = 2026-10-30
+[portfolio.currencies.BTC]
+kind = "crypto"
+minor_units = 8
+source = "test fixture"
+read_on = 2026-10-30
+[portfolio.rates.BTC]
+instrument = "SYNTH:SYNUSD"
 """
+#: The portfolio section of ``CONFIG``, for simulations built without a lab.
+PORTFOLIO = PortfolioConfig.model_validate(
+    {
+        "currencies": {
+            "USD": {"kind": "fiat", "minor_units": 2, "source": "s", "read_on": "2026-10-30"},
+            "BTC": {"kind": "crypto", "minor_units": 8, "source": "s", "read_on": "2026-10-30"},
+        },
+        "rates": {"BTC": {"instrument": "SYNTH:SYNUSD"}},
+    },
+    strict=False,
+)
+FIXED = FixedQuantitySpec(quantity=Decimal("0.5"))
+#: The synthetic instrument's definition, appended to every lab's input log.
+DEFINED = InstrumentDefined(
+    id=derived_id(NAMESPACE, b"instrument"),
+    source="ingest/synthetic",
+    ts_event_ns=T0,
+    ts_ingest_ns=T0,
+    instrument=SYNTH,
+)
 LIMITS = """\
 schema_version = 1
 environment = "research"
@@ -155,8 +207,15 @@ def make_lab(root: Path, bars: list[Bar]) -> Lab:
         ENV, config_root, secrets_root, limits_model=TradingLimits, secret_names=(), environ={}
     )
     lab = Lab(root, loaded, loaded.config.paths.data_root / "event_log.sqlite3")
-    lab.append(list(bars))
+    lab.append([DEFINED, *bars])
     return lab
+
+
+def market_of(bars: list[Bar], config: PortfolioConfig) -> RunMarket:
+    """The run market of ``bars`` of ``SYNTH`` (instrument defined; knowledge = last ingestion)."""
+    records = [LogRecord(sequence=n, event=e) for n, e in enumerate([DEFINED, *bars])]
+    known = max(r.event.ts_ingest_ns for r in records)
+    return RunMarket(config, MarketView(records), ReferenceIndex.from_records(records), known)
 
 
 def spec(**changes: Any) -> ExperimentSpec:  # noqa: ANN401 - test overrides
@@ -231,9 +290,9 @@ def test_returns_are_the_float_boundary() -> None:
 
 
 def test_float_only_in_statistics() -> None:
-    """Book, venue, cost model and engine contain no float (K7)."""
+    """Account, venue, cost model and engine contain no float (K7)."""
     root = Path(__file__).parent.parent / "src" / "auqua"
-    for module in ("portfolio/book.py", "execution/simulated.py", "execution/costs.py",
+    for module in ("portfolio/account.py", "execution/simulated.py", "execution/costs.py",
                    "analytics/engine.py"):  # fmt: skip
         tree = ast.parse((root / module).read_text(encoding="utf-8"))
         names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
@@ -334,10 +393,9 @@ def test_no_event_precedes_the_bars_it_follows(  # noqa: PLR0913, PLR0917 - hypo
     ordered = sorted(bars, key=lambda bar: (available_ns(bar), bar.start_ns))
     limits = TradingLimits(max_order_notional=Decimal(10) ** 9, max_position=Decimal(10))
     costs = FixedBps(Decimal(1), Decimal(1), TICK)
-    simulation = Simulation(
-        SYNTH, fast, slow, Settings(Decimal("0.5"), Decimal(10) ** 6, costs, limits, delay),
-        uuid.UUID(int=seed),
-    )  # fmt: skip
+    settings = Settings(FIXED, Decimal(10) ** 6, costs, limits, delay)
+    market = market_of(ordered, PORTFOLIO)
+    simulation = Simulation(SYNTH, fast, slow, settings, uuid.UUID(int=seed), market)
     seen: set[uuid.UUID] = set()
     for bar in ordered:
         before = len(simulation.events)
@@ -347,8 +405,9 @@ def test_no_event_precedes_the_bars_it_follows(  # noqa: PLR0913, PLR0917 - hypo
             assert event.ts_ingest_ns == available_ns(bar)
             if isinstance(event, Signal):
                 assert event.causation_id in seen
-        expected = simulation.book.position + simulation.venue.working(SYNTH.id)
-        assert simulation.book.position >= 0
+        position = simulation.portfolio.quantity(SYNTH.id)
+        expected = position + simulation.venue.working(SYNTH.id)
+        assert position >= 0
         assert expected in {Decimal(0), Decimal("0.5")}, "orders in flight count (latency)"
 
 
@@ -506,6 +565,9 @@ def test_coinbase_inputs_carry_the_notice(tmp_path: Path) -> None:
     coin = CryptoSpot(**{**_fields(SYNTH), "id": InstrumentId("COINBASE", "BTC-USD")})
     bars = synthetic_bars(3 * 1_440, 5, source="ingest/coinbase/exchange", instrument=coin)
     lab = make_lab(tmp_path, bars)
+    lab.append(
+        [msgspec.structs.replace(DEFINED, id=derived_id(NAMESPACE, b"coin"), instrument=coin)]
+    )
     with lab.reader() as reader:
         result = run_experiment(reader, coin, spec(instrument_id="COINBASE:BTC-USD"), lab.loaded)
     assert result.report["terms"]["sharing"] == "prohibited"
@@ -593,14 +655,150 @@ def test_trial_configuration_hash_keeps_bp5_keys_for_fixed_quantity() -> None:
     assert target != configuration_hash(_v2(allocation=VOLATILITY | {"warmup_days": 9}), 5, 20)
 
 
-def test_volatility_target_waits_for_s11(lab: Lab) -> None:
-    """Until the engine runs on the account view (BP6 S11), volatility targeting is refused."""
-    target = _v2(allocation=VOLATILITY)
+def test_volatility_target_runs_on_the_account(lab: Lab) -> None:
+    """BP6 S11: volatility targeting sizes from the account view; warm-up is reported."""
+    target = _v2(allocation=VOLATILITY | {"half_life_days": 1, "warmup_days": 1})
     with lab.reader() as reader:
-        with pytest.raises(ExperimentError, match="S11"):
-            run_experiment(reader, SYNTH, target, lab.loaded)
-        with pytest.raises(ExperimentError, match="S11"):
-            evaluate_test(reader, SYNTH, target, lab.loaded, configuration=(5, 20))
+        result = run_experiment(reader, SYNTH, target, lab.loaded)  # days 0-1: warm-up only
+        tested = evaluate_test(reader, SYNTH, target, lab.loaded, configuration=(5, 20))
+    events: list[Event] = []
+    for log in (result.run_log, tested.report_json.parent / "event_log.sqlite3"):
+        with EventLogReader(log, ENV, busy_timeout_ms=TIMEOUT_MS) as run:
+            events += [r.event for r in run.records()]
+    started = events[0]
+    assert isinstance(started, RunStartedV2)
+    assert started.knowledge_ns == T0 + 10 * DAY  # the snapshot's knowledge time (F-AB)
+    reasons = {e.reason for e in events if isinstance(e, AllocationUnavailable)}
+    assert reasons == {AllocationUnavailableReason.VOLATILITY_WARMUP}  # before day 2: no return
+    sized = [e for e in events if isinstance(e, Target) and e.quantity]
+    assert sized, "after the warm-up the allocator proposes"
+    assert all(e.quantity % LOT == 0 and e.conversion is None for e in sized)  # USD quote
+
+
+def test_the_target_records_the_rate_used_for_its_unit_value() -> None:
+    """Amendment 11 (1): a non-USD quote's conversion is recorded on portfolio.target.v1."""
+    tse = Equity(
+        id=InstrumentId("XTKS", "7203"),
+        quote_currency="JPY",
+        price_increment=Decimal("0.1"),
+        quantity_increment=Decimal(1),
+        multiplier=Decimal(1),
+        valid_from_ns=0,
+        knowledge_ns=0,
+        identifiers=Identifiers(),
+        is_fund=False,
+    )
+    known = T0 + 10 * DAY
+    bars = [
+        Bar(
+            id=derived_id(NAMESPACE, b"tse", day.to_bytes(8, "big")),
+            source="ingest/synthetic",
+            ts_event_ns=T0 + (day + 1) * DAY,
+            ts_ingest_ns=known,
+            instrument_id=tse.id,
+            start_ns=T0 + day * DAY,
+            interval_ns=DAY,
+            open=Decimal(close),
+            high=Decimal(close),
+            low=Decimal(close),
+            close=Decimal(close),
+            volume=Decimal(1),
+        )
+        for day, close in enumerate(("1000", "1020", "1009.8", "1019.9", "1030", "1040"))
+    ]
+    series = SeriesId("FRB", "H10/RXI_N.B.JA")
+    rate = ReferenceRate(
+        id=derived_id(NAMESPACE, b"jpy"),
+        source="ingest/frb/h10",
+        ts_event_ns=T0,
+        ts_ingest_ns=T0,
+        series_id=series,
+        value=Decimal(150),
+        unit="JPY per USD",
+        ts_published_ns=T0,
+    )
+    defined = msgspec.structs.replace(DEFINED, id=derived_id(NAMESPACE, b"tse-def"), instrument=tse)
+    records = [LogRecord(sequence=n, event=e) for n, e in enumerate([defined, rate, *bars])]
+    entry = {"source": "s", "read_on": "2026-10-30"}
+    config = PortfolioConfig.model_validate(
+        {
+            "currencies": {
+                "USD": {"kind": "fiat", "minor_units": 2, **entry},
+                "JPY": {"kind": "fiat", "minor_units": 0, **entry},
+            },
+            "rates": {"JPY": {"series": str(series)}},
+        },
+        strict=False,
+    )
+    market = RunMarket(config, MarketView(records), ReferenceIndex.from_records(records), known)
+    allocation = VolatilityTargetSpec(
+        target_volatility=Decimal("0.1"), leverage_cap=Decimal(2), half_life_days=1, warmup_days=3
+    )
+    limits = TradingLimits(max_order_notional=Decimal(10) ** 12, max_position=Decimal(10) ** 9)
+    settings = Settings(
+        allocation, Decimal(10_000_000), FixedBps(Decimal(0), Decimal(0), TICK), limits
+    )
+    simulation = Simulation(tse, 1, 2, settings, uuid.UUID(int=5), market).run(bars)
+    sized = [e for e in simulation.events if isinstance(e, Target) and e.quantity]
+    assert sized
+    for target in sized:
+        assert target.conversion is not None
+        assert (target.conversion.unit, target.conversion.rate) == ("JPY per USD", Decimal(150))
+    assert simulation.equity[0][1] == Decimal(10_000_000)  # in the quote currency (F-AA)
+
+
+def test_the_equity_series_refuses_other_currencies_and_classes() -> None:
+    """F-AA: a balance in a third currency is refused, never ignored; no futures or swaps."""
+    bars = synthetic_bars(5, 1)
+    limits = TradingLimits(max_order_notional=Decimal(10) ** 9, max_position=Decimal(10))
+    settings = Settings(FIXED, Decimal(1000), FixedBps(Decimal(1), Decimal(1), TICK), limits)
+    simulation = Simulation(SYNTH, 2, 3, settings, uuid.UUID(int=1), market_of(bars, PORTFOLIO))
+    simulation._record(  # a transfer the engine itself never makes
+        CashTransfer(
+            id=uuid.UUID(int=2),
+            source="research/backtest",
+            ts_event_ns=0,
+            ts_ingest_ns=0,
+            currency="EUR",
+            amount=Decimal(1),
+            reference="t",
+        )
+    )
+    with pytest.raises(EngineError, match="EUR"):
+        simulation.equity_at(Decimal(100))
+    swap = PerpetualSwap(
+        id=InstrumentId("DERIBIT", "BTC-PERPETUAL"),
+        quote_currency="USD",
+        price_increment=Decimal("0.5"),
+        quantity_increment=Decimal(1),
+        multiplier=Decimal(10),
+        valid_from_ns=0,
+        knowledge_ns=0,
+        identifiers=Identifiers(),
+        base_currency="BTC",
+        settlement_currency="BTC",
+        contract_type=PerpetualType.INVERSE,
+        funding_interval_ns=8 * 3_600 * 10**9,
+    )
+    with pytest.raises(EngineError, match="no research equity"):
+        Simulation(swap, 2, 3, settings, uuid.UUID(int=1), market_of(bars, PORTFOLIO))
+
+
+def test_a_run_needs_its_currencies_configured(lab: Lab) -> None:
+    """F-AE: a currency the run trades, or a volatility target's rate, missing → refused."""
+    config = lab.loaded.config
+    no_btc = config.portfolio.model_copy(
+        update={"currencies": {"USD": config.portfolio.currencies["USD"]}, "rates": {}}
+    )
+    loaded = dataclasses.replace(lab.loaded, config=config.model_copy(update={"portfolio": no_btc}))
+    with lab.reader() as reader, pytest.raises(ConfigurationError, match="BTC"):
+        run_experiment(reader, SYNTH, spec(), loaded)
+    no_rate = config.portfolio.model_copy(update={"rates": {}})
+    loaded = dataclasses.replace(
+        lab.loaded, config=config.model_copy(update={"portfolio": no_rate})
+    )
+    with lab.reader() as reader, pytest.raises(ConfigurationError, match="rates has no source"):
+        run_experiment(reader, SYNTH, _v2(allocation=VOLATILITY), loaded)
 
 
 SPEC_TOML = """\
@@ -636,15 +834,7 @@ def test_command_line_prints_statuses_and_hashes_only(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """K12: the CLI runs from TOML; output is run id, report hash and check statuses only."""
-    defined = InstrumentDefined(
-        id=derived_id(NAMESPACE, b"instrument"),
-        source="ingest/synthetic",
-        ts_event_ns=T0,
-        ts_ingest_ns=T0,
-        instrument=SYNTH,
-    )
     lab = make_lab(tmp_path, synthetic_bars(3 * 1_440, seed=11))
-    lab.append([defined])
     path = tmp_path / "spec.toml"
     path.write_text(SPEC_TOML, encoding="utf-8")
     roots = ["--config-root", str(tmp_path / "config"), "--secrets-root", str(tmp_path / "secrets")]
@@ -698,14 +888,12 @@ def economic_outputs(lab: Lab) -> dict[str, Any]:
     bars = [b for b in synthetic_bars(3 * 1_440, seed=11) if available_ns(b) < T0 + 2 * DAY]
     costs = FixedBps(experiment.fee_bps, experiment.slippage_bps, experiment.fee_increment)
     settings = Settings(
-        experiment.allocation.quantity,
-        experiment.initial_cash,
-        costs,
-        lab.loaded.risk_limits.limits,
+        experiment.allocation, experiment.initial_cash, costs, lab.loaded.risk_limits.limits
     )
+    market = market_of(bars, lab.loaded.config.portfolio)
     simulations: dict[str, Any] = {}
     for fast, slow in experiment.signal.configurations():
-        simulation = Simulation(SYNTH, fast, slow, settings, BASELINE_RUN).run(bars)
+        simulation = Simulation(SYNTH, fast, slow, settings, BASELINE_RUN, market).run(bars)
         fills = [e for e in simulation.events if isinstance(e, Fill)]
         simulations[f"{fast}/{slow}"] = {
             "fills": [

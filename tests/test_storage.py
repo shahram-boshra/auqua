@@ -231,10 +231,16 @@ PRE_RULE_W_STORED = (
     b'"identifiers":{"figi":null,"isin":null,"cfi":null,"dti":null},"underlying":"XYZ",'
     b'"right":"call","strike":"50","expiry_ns":1767225600000000000,"exercise_style":"american",'
     b'"settlement":"physical"}}',
+    b'{"type":"portfolio.target.v1","id":"00000000-0000-0000-0000-000000000009",'
+    b'"source":"research/backtest","ts_event_ns":1735689600000000000,'
+    b'"ts_ingest_ns":1735689600000000000,"causation_id":"00000000-0000-0000-0000-000000000008",'
+    b'"instrument_id":{"venue":"COINBASE","symbol":"BTC-USD"},"quantity":"0.5"}',
 )
 
 
-@pytest.mark.parametrize("stored", PRE_RULE_W_STORED, ids=["fill", "fx_settlement", "option"])
+@pytest.mark.parametrize(
+    "stored", PRE_RULE_W_STORED, ids=["fill", "fx_settlement", "option", "target"]
+)
 def test_pre_rule_w_payload_reappends_as_a_duplicate(log_path: Path, stored: bytes) -> None:
     """Stored before its Rule W field, an event re-appends as a duplicate: same bytes."""
     event = CANONICAL.decode(stored)

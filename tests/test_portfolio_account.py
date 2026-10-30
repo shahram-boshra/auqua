@@ -52,6 +52,7 @@ from auqua.contracts.instruments import (
     Settlement,
 )
 from auqua.contracts.portfolio import PostingKind
+from auqua.portfolio import store as store_module
 from auqua.portfolio.account import Portfolio, PortfolioState
 from auqua.portfolio.errors import CorporateActionLateError, PortfolioError
 from auqua.portfolio.store import MIGRATIONS, catch_up, content_sha256
@@ -60,7 +61,7 @@ from auqua.storage.eventlog import EventLog
 from auqua.storage.marketview import MarketView
 from auqua.storage.reference import ReferenceIndex
 from auqua.storage.replay import EventLogReader
-from auqua.storage.store import open_store
+from auqua.storage.store import StoreMigrations, open_store
 
 CHICAGO = zoneinfo.ZoneInfo("America/Chicago")
 CENT = Decimal("0.01")
@@ -598,6 +599,69 @@ def test_unmarked_position_and_written_option() -> None:
     assert view.equity_base == Decimal(10000) + Decimal(250) - Decimal(200)
 
 
+def _written_option() -> Option:
+    return Option(
+        id=InstrumentId("OCC", "AAPL-P150"),
+        quote_currency="USD",
+        price_increment=CENT,
+        quantity_increment=Decimal(1),
+        multiplier=Decimal(100),
+        underlying="AAPL",
+        right=OptionRight.PUT,
+        strike=Decimal(150),
+        expiry_ns=ct(31, 15),
+        exercise_style=ExerciseStyle.AMERICAN,
+        settlement=Settlement.CASH,
+        **_identifiers(),
+    )
+
+
+def test_realized_pnl_is_proceeds_minus_relieved_cost() -> None:
+    """Amendment 12 (F-AF): long and short lots, exact; an inverse perpetual's posted P&L."""
+    option = _written_option()
+    events = [
+        InstrumentDefined(**_common(1, ct(25, 0)), instrument=INSTRUMENTS[0]),
+        InstrumentDefined(**_common(2, ct(25, 0)), instrument=option),
+        CashTransfer(**_common(9, ct(25, 1)), currency="USD", amount=Decimal(50000), reference="t"),
+        _fill(30, AAPL, Side.BUY, "60", "200.00", ct(26, 9), fee="1.00"),
+        _fill(31, AAPL, Side.SELL, "20", "210.00", ct(26, 10), fee="1.00"),
+        _fill(32, option.id, Side.SELL, "2", "5.00", ct(26, 11)),  # written: 1,000 received
+        _fill(33, option.id, Side.BUY, "1", "3.00", ct(26, 12)),  # bought back: 300 paid
+    ]
+    portfolio = _fold(events)[0]
+    assert portfolio.realized(AAPL, "USD") == Decimal(200)  # 20 x (210 - 200), fees apart
+    assert portfolio.realized(option.id, "USD") == Decimal(200)  # 500 of cost - 300
+    assert portfolio.realized(AAPL, "EUR") == Decimal(0)
+    scenario = _fold(_scenario())[0]
+    posted = sum(
+        (p.amount for p in scenario.postings if p.kind is PostingKind.REALIZED), Decimal(0)
+    )
+    assert scenario.realized(PERP, "BTC") == posted != 0
+    assert (PERP, "BTC", posted) in scenario.state().realized
+
+
+def test_knowledge_time_selects_what_the_view_sees() -> None:
+    """Amendment 12 (F-AB): a bar ingested later is unknown live, known to a backtest."""
+    late = msgspec.structs.replace(_bar(40, AAPL, "11.00", ct(26, 10)), ts_ingest_ns=ct(28, 0))
+    events = [
+        InstrumentDefined(**_common(1, ct(25, 0)), instrument=INSTRUMENTS[0]),
+        CashTransfer(**_common(9, ct(25, 1)), currency="USD", amount=Decimal(1000), reference="t"),
+        _fill(30, AAPL, Side.BUY, "10", "10.00", ct(26, 9)),
+        CashTransfer(**_common(10, ct(26, 11)), currency="USD", amount=Decimal(1), reference="u"),
+    ]
+    market = MarketView([LogRecord(sequence=0, event=late)])
+    marks = []
+    for knowledge in (None, ct(28, 0)):
+        portfolio = Portfolio(_config(), market, knowledge_ns=knowledge)
+        previous = GENESIS
+        for sequence, event in enumerate(events):
+            previous = record_hash(previous, sequence, encode(event))
+            portfolio.apply(LogRecord(sequence=sequence, event=event), previous)
+        (row,) = portfolio.view().positions
+        marks.append(row.mark)
+    assert marks == [None, Decimal("11.00")]
+
+
 # --- T19: the projection (S9b; amendment 8) ---------------------------------------------------
 TIMEOUT_MS = 5_000
 
@@ -705,6 +769,33 @@ def test_projection_of_another_configuration_or_code_is_rebuilt(tmp_path: Path) 
     assert (stamped["config_id"], stamped["code_id"]) == (config_id(_config()), CODE)
     assert _catch_up(log_path, store_path, _config(account_id="other"))[2]
     assert _catch_up(log_path, store_path, code="d" * 64)[2]
+
+
+def test_projection_schema_2_keeps_realized_and_migrates_a_version_1_store(
+    tmp_path: Path,
+) -> None:
+    """Amendment 12 (F-AF): store version 1 gains the realized table; schema 1 → rebuild."""
+    log_path, store_path = tmp_path / "log.sqlite3", tmp_path / "state.sqlite3"
+    _append(log_path, _scenario())
+    old = StoreMigrations(current=1)
+    old.register(0, store_module._create_tables)
+    open_store(store_path, old, busy_timeout_ms=TIMEOUT_MS).close()
+    folded, _, rebuilt = _catch_up(log_path, store_path)  # upgraded to version 2, then folded
+    assert rebuilt
+    connection = open_store(store_path, MIGRATIONS, busy_timeout_ms=TIMEOUT_MS)
+    try:
+        rows = connection.execute("SELECT instrument, currency FROM portfolio_realized").fetchall()
+    finally:
+        connection.close()
+    assert rows == [(str(PERP), "BTC")]
+    _tamper(
+        store_path,
+        "UPDATE portfolio_meta SET value = '1' WHERE key = 'projection_schema'",
+        rehash=True,
+    )
+    again, _, rebuilt = _catch_up(log_path, store_path)
+    assert rebuilt
+    assert again.state() == folded.state()
 
 
 def test_later_version_known_earlier_does_not_change_folded_state(tmp_path: Path) -> None:
