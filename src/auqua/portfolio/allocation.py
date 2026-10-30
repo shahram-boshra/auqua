@@ -41,7 +41,7 @@ from auqua.contracts.events.market import Bar
 from auqua.contracts.events.trading import AllocationUnavailableReason, Signal
 from auqua.contracts.identity import InstrumentId
 from auqua.contracts.instruments import AnyInstrument, PerpetualSwap, PerpetualType
-from auqua.contracts.numeric import Rounding, divide, exact, from_float, on_grid
+from auqua.contracts.numeric import Rounding, divide, exact, from_float, on_grid, quantize
 from auqua.contracts.portfolio import BASE_CURRENCY, AccountView, Conversion
 from auqua.portfolio.errors import PortfolioError
 from auqua.portfolio.series import NS_PER_DAY, daily_last, periods_per_year, simple_returns
@@ -138,6 +138,20 @@ def _distinct(signals: Sequence[Signal]) -> None:
         raise PortfolioError("one signal per instrument")
 
 
+def _on_grid(quantity: Decimal, instrument: AnyInstrument) -> Decimal:
+    """``quantity`` (a multiple of the quantity increment) in the increment's scale (PC-9).
+
+    Every target, flat included, is canonical: the same value has the same bytes
+    whichever allocator proposed it (BP6 amendment 13, point 6; amendment 14).
+
+    Raises:
+        OffGridError: ``quantity`` is not a multiple of the quantity increment.
+    """
+    increment = instrument.quantity_increment
+    on_grid(quantity, increment)
+    return quantize(quantity, increment, Rounding.DOWN)
+
+
 def _instrument(
     reference: ReferenceIndex, instrument_id: InstrumentId, t: int, known: int
 ) -> AnyInstrument:
@@ -177,7 +191,8 @@ class FixedQuantity:
             instrument = _instrument(self._reference, signal.instrument_id, t, known)
             on_grid(self._spec.quantity, instrument.quantity_increment)
             with exact():
-                quantity = self._spec.quantity * signal.direction
+                signed = self._spec.quantity * signal.direction
+            quantity = _on_grid(signed, instrument)
             targets.append(ProposedTarget(signal.instrument_id, quantity))
         return Proposal(tuple(targets), ())
 
@@ -283,13 +298,13 @@ class VolatilityTarget:
         if isinstance(instrument, PerpetualSwap) and not inverse:
             raise PortfolioError(f"{instrument.id}: linear perpetuals are refused (BP6 R1)")
         if signal.direction == 0:
-            return ProposedTarget(signal.instrument_id, Decimal(0))
+            return ProposedTarget(signal.instrument_id, _on_grid(Decimal(0), instrument))
         inputs = self._inputs(instrument, view.equity_base, t, known, inverse=inverse)
         if isinstance(inputs, AllocationUnavailableReason):
             return Unavailable(signal.instrument_id, inputs)
         equity, unit, conversion, sigma = inputs
         size = self._size(equity, unit, sigma, conversion, instrument)
-        quantity = size if signal.direction > 0 else -size  # a zero size stays +0
+        quantity = _on_grid(size if signal.direction > 0 else -size, instrument)  # -0 is +0
         return ProposedTarget(signal.instrument_id, quantity, conversion)
 
     def _inputs(

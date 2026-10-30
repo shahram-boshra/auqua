@@ -6,12 +6,14 @@ All bars are first-party synthetic data (a seeded random walk in whole ticks).
 """
 
 import ast
+import copy
 import dataclasses
 import datetime
 import hashlib
 import json
 import math
 import random
+import re
 import stat
 import uuid
 from dataclasses import dataclass
@@ -889,51 +891,47 @@ def test_command_line_prints_statuses_and_hashes_only(
 
 
 # --- BP6 T15: economic outputs, characterised before the portfolio change (PC-10, S0) -----------
+#: Every economic output of the BP5 synthetic experiment, generated once by the S0 commit's code
+#: (amendment 14; its source tree and parent commit are recorded in the file).
 ECONOMIC_BASELINE = Path(__file__).parent / "snapshots" / "bp5_economic_outputs.json"
 #: Fixed run id for the per-configuration simulations: ids do not enter the economic outputs.
 BASELINE_RUN = uuid.UUID(int=0)
 
 
-def _equity_digest(equity: list[tuple[int, Decimal]]) -> dict[str, Any]:
-    text = "\n".join(f"{t} {value}" for t, value in equity)
-    return {
-        "points": len(equity),
-        "last": str(equity[-1][1]),
-        "sha256": hashlib.sha256(text.encode()).hexdigest(),
-    }
-
-
 def economic_outputs(lab: Lab) -> dict[str, Any]:
-    """Fills, equity series and trial statistics of the BP5 synthetic experiment.
+    """Fills, every equity point and the trial statistics of the BP5 synthetic experiment.
 
     Run ids and report bytes are excluded: they include ``code_id``, which
-    changes with every code change (BP6 PC-10). Per-period Sharpe ratios are
-    compared as the exact text of their binary values.
+    changes with every code change (BP6 PC-10). Values are exact text: decimals
+    by ``str``, binary floats by ``repr``; they are compared as values.
     """
     experiment = spec()
-    assert isinstance(experiment.allocation, FixedQuantitySpec)
     bars = [b for b in synthetic_bars(3 * 1_440, seed=11) if available_ns(b) < T0 + 2 * DAY]
     costs = FixedBps(experiment.fee_bps, experiment.slippage_bps, experiment.fee_increment)
     settings = Settings(
         experiment.allocation, experiment.initial_cash, costs, lab.loaded.risk_limits.limits
     )
     market = market_of(bars, lab.loaded.config.portfolio)
+    times: list[int] = []
     simulations: dict[str, Any] = {}
     for fast, slow in experiment.signal.configurations():
         simulation = Simulation(SYNTH, fast, slow, settings, BASELINE_RUN, market).run(bars)
-        fills = [e for e in simulation.events if isinstance(e, Fill)]
+        times = times or [t for t, _ in simulation.equity]
+        assert [t for t, _ in simulation.equity] == times
         simulations[f"{fast}/{slow}"] = {
             "fills": [
                 [f.side.value, str(f.quantity), str(f.price), str(f.fee), f.fee_currency]
-                for f in fills
+                for f in simulation.events
+                if isinstance(f, Fill)
             ],
-            "equity": _equity_digest(simulation.equity),
+            "equity": [str(value) for _, value in simulation.equity],
         }
     with lab.reader() as reader:
         result = run_experiment(reader, SYNTH, experiment, lab.loaded)
     with EventLogReader(result.run_log, ENV, busy_timeout_ms=TIMEOUT_MS) as run:
         trials = [r.event for r in run.records() if isinstance(r.event, Trial)]
     return {
+        "times": times,
         "simulations": simulations,
         "trials": sorted(
             [t.config_hash, t.period.value, t.observations, str(t.sharpe), t.returns_sha256]
@@ -950,8 +948,106 @@ def economic_outputs(lab: Lab) -> dict[str, Any]:
     }
 
 
-def test_economic_outputs_match_the_baseline(tmp_path: Path) -> None:
-    """BP6 T15: fills, equity series and trial statistics equal the pre-BP6 baseline."""
-    lab = make_lab(tmp_path, synthetic_bars(3 * 1_440, seed=11))
+def _decimals(where: str, expected: list[str], actual: list[str]) -> list[str]:
+    if len(expected) != len(actual):
+        return [f"{where}: {len(expected)} values, {len(actual)} now"]
+    return [
+        f"{where}[{n}]: {e} != {a}"
+        for n, (e, a) in enumerate(zip(expected, actual, strict=True))
+        if Decimal(e) != Decimal(a)
+    ]
+
+
+def _floats(where: str, expected: dict[str, str], actual: dict[str, str]) -> list[str]:
+    if expected.keys() != actual.keys():
+        return [f"{where}: {sorted(expected)} != {sorted(actual)}"]
+    return [
+        f"{where}.{k}: {v} != {actual[k]}"
+        for k, v in expected.items()
+        if float(v) != float(actual[k])
+    ]
+
+
+def economic_differences(expected: dict[str, Any], actual: dict[str, Any]) -> list[str]:
+    """Every difference between two sets of economic outputs, compared AS VALUES (amendment 14).
+
+    Decimals by ``==`` (exact: 0.5 == 0.500), binary floats exactly (no
+    tolerance), bar times, counts, order and the ranking equal.
+    """
+    out: list[str] = []
+    if expected["times"] != actual["times"]:
+        out.append("equity times differ")
+    if expected["simulations"].keys() != actual["simulations"].keys():
+        return [*out, "configurations differ"]
+    for name, sim in expected["simulations"].items():
+        now = actual["simulations"][name]
+        out += _decimals(f"{name}.equity", sim["equity"], now["equity"])
+        if len(sim["fills"]) != len(now["fills"]):
+            out.append(f"{name}: {len(sim['fills'])} fills, {len(now['fills'])} now")
+            continue
+        for n, (e, a) in enumerate(zip(sim["fills"], now["fills"], strict=True)):
+            if (e[0], e[4]) != (a[0], a[4]) or _decimals("", e[1:4], a[1:4]):
+                out.append(f"{name}.fills[{n}]: {e} != {a}")
+    if len(expected["trials"]) != len(actual["trials"]):
+        return [*out, "trial counts differ"]
+    for e, a in zip(expected["trials"], actual["trials"], strict=True):
+        same = (e[0], e[1], e[2], e[4]) == (a[0], a[1], a[2], a[4])
+        if not same or Decimal(e[3]) != Decimal(a[3]):
+            out.append(f"trial {e[0][:12]} {e[1]}: {e} != {a}")
+    ranked = [c["configuration"] for c in expected["ranking"]]
+    if ranked != [c["configuration"] for c in actual["ranking"]]:
+        return [*out, "ranking order differs"]
+    for e, a in zip(expected["ranking"], actual["ranking"], strict=True):
+        where = e["configuration"]
+        out += _floats(
+            where, {"validation": e["validation_sharpe"]}, {"validation": a["validation_sharpe"]}
+        )
+        out += _floats(f"{where}.sweeps", e["sweeps"], a["sweeps"])
+    return out
+
+
+@pytest.fixture(scope="module")
+def economics(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The S0 baseline and the current code's economic outputs (computed once)."""
+    lab = make_lab(tmp_path_factory.mktemp("t15"), synthetic_bars(3 * 1_440, seed=11))
     expected = json.loads(ECONOMIC_BASELINE.read_text(encoding="utf-8"))
-    assert economic_outputs(lab) == expected
+    return expected, economic_outputs(lab)
+
+
+def test_economic_outputs_match_the_baseline(
+    economics: tuple[dict[str, Any], dict[str, Any]],
+) -> None:
+    """BP6 T15: fills, every equity point and the trial statistics equal S0's, as values."""
+    expected, actual = economics
+    source = expected["source"]  # the S0 tree and its parent (BP5), as git object names
+    assert all(re.fullmatch(r"[0-9a-f]{40}", source[k]) for k in ("s0_tree", "s0_parent_commit"))
+    assert economic_differences(expected, actual) == []
+
+
+def test_the_comparison_sees_one_ulp_one_digit_and_one_fill(
+    economics: tuple[dict[str, Any], dict[str, Any]],
+) -> None:
+    """Amendment 14: a one-ulp statistic, one equity point's last decimal, a missing fill."""
+    expected, actual = economics
+    ulp = copy.deepcopy(expected)
+    sharpe = float(ulp["ranking"][0]["validation_sharpe"])
+    ulp["ranking"][0]["validation_sharpe"] = repr(math.nextafter(sharpe, math.inf))
+    assert economic_differences(ulp, actual) == [
+        f"{ulp['ranking'][0]['configuration']}.validation: "
+        f"{ulp['ranking'][0]['validation_sharpe']} != {actual['ranking'][0]['validation_sharpe']}"
+    ]
+    digit = copy.deepcopy(expected)
+    series = digit["simulations"]["5/20"]["equity"]
+    point = Decimal(series[100])
+    last_digit = Decimal(1).scaleb(int(point.as_tuple().exponent))
+    series[100] = str(point + last_digit)
+    assert len(economic_differences(digit, actual)) == 1
+    trial = copy.deepcopy(expected)
+    trial["trials"][0][3] = repr(math.nextafter(float(trial["trials"][0][3]), math.inf))
+    assert len(economic_differences(trial, actual)) == 1
+    missing = copy.deepcopy(expected)
+    missing["simulations"]["10/40"]["fills"].pop()
+    assert economic_differences(missing, actual) == [
+        f"10/40: {len(missing['simulations']['10/40']['fills'])} fills, "
+        f"{len(actual['simulations']['10/40']['fills'])} now"
+    ]
