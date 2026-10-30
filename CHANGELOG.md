@@ -203,6 +203,12 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   value. A run's input references count the reference-rate observations a rate
   source supplies (`rates`, an optional field). The engine's refusal of
   futures and perpetual swaps names the class.
+- Every target quantity is on the instrument's quantity grid, in the
+  increment's scale (flat included), so equal targets have equal bytes
+  whichever allocator proposed them (BP6 amendments 13 and 14). The BP6 T15
+  regression compares the economic outputs as values (exact decimals, exact
+  floats, counts and order) against a baseline holding every equity point,
+  fill and trial statistic, regenerated once from the S0 commit's code.
 
 ### Changed
 

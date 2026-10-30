@@ -565,6 +565,22 @@ def test_fixed_quantity_is_quantity_times_direction() -> None:
     assert proposal.unavailable == ()
 
 
+def test_targets_are_canonical_on_the_quantity_grid() -> None:
+    """Amendment 13 (6): every target in the increment's scale; flat has the same bytes always."""
+    market, reference, valuation = _scenario()
+    fixed = FixedQuantity(FixedQuantitySpec(quantity=Decimal("0.5")), reference)
+    target = VolatilityTarget(SPEC, market=market, valuation=valuation, reference=reference)
+    flat = [
+        allocator.propose([_signal(ETH_BTC, 0)], _view()).targets[0].quantity
+        for allocator in (fixed, target)
+    ]
+    assert [str(q) for q in flat] == ["0.0000", "0.0000"]  # ETH-BTC increment 0.0001
+    (long,) = fixed.propose([_signal(ETH_BTC, 1)], _view()).targets
+    assert str(long.quantity) == "0.5000"
+    sized = target.propose([_signal(SPY, -1)], _view()).targets[0].quantity
+    assert sized.as_tuple().exponent == 0  # SPY increment 1
+
+
 def test_allocator_follows_the_spec_method() -> None:
     """``fixed_quantity`` and ``volatility_target``; defaults H = 20, W = 270 (ADR 0037)."""
     market, reference, valuation = _scenario()
