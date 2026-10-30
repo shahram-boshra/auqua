@@ -235,11 +235,32 @@ PRE_RULE_W_STORED = (
     b'"source":"research/backtest","ts_event_ns":1735689600000000000,'
     b'"ts_ingest_ns":1735689600000000000,"causation_id":"00000000-0000-0000-0000-000000000008",'
     b'"instrument_id":{"venue":"COINBASE","symbol":"BTC-USD"},"quantity":"0.5"}',
+    b'{"type":"research.run.v2","id":"00000000-0000-0000-0000-00000000000b",'
+    b'"source":"research/backtest","ts_event_ns":0,"ts_ingest_ns":0,"input_head_hash":"'
+    + b"b"
+    * 64
+    + b'","input_next_sequence":3,"instrument_id":{"venue":"SYNTH","symbol":"SYNUSD"},'
+    b'"instrument_sha256":"'
+    + b"c" * 64
+    + b'","config_id":"'
+    + b"d" * 64
+    + b'","spec_id":"'
+    + b"e" * 64
+    + b'","risk_limits_sha256":"'
+    + b"f" * 64
+    + b'","code_id":"'
+    + b"0" * 64
+    + b'","code_version":"0.1.0","hypothesis_id":null,"spec_version":null,'
+    b'"interval_ns":null,"knowledge_ns":null,"periods":[],"inputs":[{"event_source":'
+    b'"ingest/frb/h10","profile":"frb-h10","terms":"t","use_class":"u","jurisdiction":"US",'
+    b'"availability":"a","runs":1,"runs_sha256":"'
+    + b"a" * 64
+    + b'","bars":0,"gaps":0}],"uv_lock_sha256":null,"python_version":null,"seed":null}',
 )
 
 
 @pytest.mark.parametrize(
-    "stored", PRE_RULE_W_STORED, ids=["fill", "fx_settlement", "option", "target"]
+    "stored", PRE_RULE_W_STORED, ids=["fill", "fx_settlement", "option", "target", "run"]
 )
 def test_pre_rule_w_payload_reappends_as_a_duplicate(log_path: Path, stored: bytes) -> None:
     """Stored before its Rule W field, an event re-appends as a duplicate: same bytes."""

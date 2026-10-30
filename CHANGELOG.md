@@ -194,6 +194,15 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   realized P&L per instrument and currency (projection schema 2, store
   version 2). Market-view lookups bisect a cached, bounded resolved series.
   `replay_portfolio` replaces `replay_book`; `Book` is removed.
+- Realized P&L on every lot relief (BP6 amendment 13): an option's expiry
+  realizes its premium (proceeds 0), a cash-settled exercise or assignment its
+  cash settlement amount; a physical exercise or assignment carries the
+  option's cost into the delivered stock (a call: added to its cost when
+  bought, to the amount realized when sold), or realizes it at once when the
+  underlying is a future (projection schema 3). Lots take a trade worth a total
+  value. A run's input references count the reference-rate observations a rate
+  source supplies (`rates`, an optional field). The engine's refusal of
+  futures and perpetual swaps names the class.
 
 ### Changed
 

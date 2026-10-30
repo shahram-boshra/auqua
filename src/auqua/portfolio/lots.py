@@ -70,10 +70,16 @@ class Relief:
 
 @dataclass(frozen=True)
 class TradeResult:
-    """What a trade did to the lots: the relieved parts, in FIFO order, and the units opened."""
+    """What a trade did to the lots.
+
+    ``relieved`` are the relieved parts in FIFO order, ``opened`` the units
+    opened, and ``proceeds`` the trade's value of the relieved units (BP6
+    amendment 13): price x relieved units, or their exact share of a total value.
+    """
 
     relieved: tuple[Relief, ...]
     opened: Decimal
+    proceeds: Decimal = Decimal(0)
 
     @property
     def relieved_quantity(self) -> Decimal:
@@ -157,11 +163,32 @@ class Lots:
         Raises:
             LotError: ``quantity`` is zero.
         """
+        return self._trade(quantity, price, None)
+
+    def trade_at_value(self, quantity: Decimal, value: Decimal) -> TradeResult:
+        """Apply a trade of signed ``quantity`` whose units are worth ``value`` in total.
+
+        Used when a unit's value is not a price, e.g. a physical option exercise
+        whose delivered units carry the option's cost (BP6 amendment 13): the
+        relieved units' proceeds are their share of ``value``, ``value x relieved
+        / |quantity|`` — exact, or rounded once onto the increment
+        (``HALF_EVEN``) — and the opened lot's cost is the rest, so the parts
+        sum to ``value`` exactly.
+
+        Raises:
+            LotError: ``quantity`` is zero.
+        """
+        return self._trade(quantity, None, value)
+
+    def _trade(
+        self, quantity: Decimal, price: Decimal | None, value: Decimal | None
+    ) -> TradeResult:
         if quantity.is_zero():
             raise LotError("a trade moves a non-zero quantity")
         direction = 1 if quantity > 0 else -1
         with exact():
             remaining = abs(quantity)
+        units = remaining
         relieved: list[Relief] = []
         while remaining and self._lots and direction != self._direction:
             lot = self._lots[0]
@@ -173,12 +200,37 @@ class Lots:
                 self._lots.popleft()
         if not self._lots:
             self._direction = 0
-        if remaining:
+        with exact():
+            relieved_units = units - remaining
+        if value is None:
+            if price is None:  # pragma: no cover - trade() and trade_at_value() pass one
+                raise LotError("a trade needs a price or a value")
             with exact():
+                proceeds = price * relieved_units
                 cost = price * remaining
-            self._lots.append(Lot(remaining, cost, price))
+            unit: Decimal | None = price
+        else:
+            proceeds = self._share(value, relieved_units, units)
+            with exact():
+                cost = value - proceeds
+            unit = _exact_quotient(cost, remaining) if remaining else None
+        if remaining:
+            self._lots.append(Lot(remaining, cost, unit))
             self._direction = direction
-        return TradeResult(tuple(relieved), remaining)
+        return TradeResult(tuple(relieved), remaining, proceeds)
+
+    def _share(self, value: Decimal, part: Decimal, whole: Decimal) -> Decimal:
+        """``value x part / whole``: exact when it terminates, else rounded once (``HALF_EVEN``)."""
+        if part.is_zero():
+            return Decimal(0)
+        if part == whole:
+            return value
+        with exact():
+            numerator = value * part
+        share = _exact_quotient(numerator, whole)
+        if share is not None:
+            return share
+        return divide(numerator, whole, self._increment, Rounding.HALF_EVEN)
 
     def _relieve(self, lot: Lot, units: Decimal) -> Decimal:
         with exact():

@@ -87,6 +87,7 @@ from auqua.contracts.instruments import (
     Future,
     FxPair,
     Option,
+    OptionRight,
     PerpetualSwap,
     PerpetualType,
 )
@@ -125,7 +126,12 @@ from auqua.portfolio.errors import CorporateActionLateError, PortfolioError
 from auqua.portfolio.ledger import Ledger
 from auqua.portfolio.lots import Lot, Lots
 from auqua.portfolio.margin import PerInstrumentMargin, margin_rows
-from auqua.portfolio.options import exercise_effect, premium_postings
+from auqua.portfolio.options import (
+    Delivery,
+    cash_settlement_amount,
+    exercise_effect,
+    premium_postings,
+)
 from auqua.portfolio.reconcile import SOURCE as DERIVED_SOURCE
 from auqua.portfolio.reconcile import Reconciler, fx_settlement_break
 from auqua.portfolio.valuation import Valuation, latest_close
@@ -367,13 +373,19 @@ class Portfolio:
         return self._quantity(instrument_id)
 
     def realized(self, instrument_id: InstrumentId, currency: str) -> Decimal:
-        """Realized P&L of ``instrument_id`` in ``currency``, exact (amendment 12, F-AF).
+        """Realized P&L of ``instrument_id`` in ``currency``, exact (amendments 12 and 13).
 
-        Proceeds minus the FIFO cost relieved by fills (and physical deliveries)
-        of spot pairs, equities, options and bonds; for inverse perpetuals the
-        coin P&L posted as ``realized``. Futures realize through their daily
-        variation postings; lifecycle closes (an option's exercise or expiry,
-        a delisting) relieve no lots by trade and add nothing here.
+        Proceeds minus the FIFO cost relieved, on every lot relief of spot pairs,
+        equities, options and bonds: fills; an option's expiry (proceeds 0: the
+        holder loses the premium, the writer keeps it); a cash-settled exercise
+        or assignment (proceeds: the cash settlement amount). A physical exercise
+        or assignment moves the option's cost into the delivered underlying (a
+        call bought: added to its cost; sold: added to the amount realized; a put
+        the reverse), realized when the underlying is disposed of — into a
+        future it is realized at once, since a future's P&L is its variation.
+        For inverse perpetuals, the coin P&L posted as ``realized``. Futures
+        realize through their variation; a delisting realizes nothing until
+        disposal.
         """
         return self._realized.get((instrument_id, currency), Decimal(0))
 
@@ -387,19 +399,25 @@ class Portfolio:
     def _trade(
         self,
         lots: Lots,
-        instrument_id: InstrumentId,
-        currency: str,
+        instrument: Equity | Bond | Option | CryptoSpot | FxPair,
         quantity: Decimal,
         price: Decimal,
+        *,
+        value: Decimal | None = None,
     ) -> None:
-        """Trade ``lots`` and realize proceeds - relieved cost of the lots it relieves."""
+        """Trade ``lots`` (at ``price``, or worth ``value`` in total) and realize its reliefs.
+
+        Realized, in the quote currency = proceeds - relieved cost for long
+        lots, the reverse for short lots.
+        """
         facing = lots.direction
-        result = lots.trade(quantity, price)
+        result = (
+            lots.trade(quantity, price) if value is None else lots.trade_at_value(quantity, value)
+        )
         if result.relieved:
             with exact():
-                proceeds = result.relieved_quantity * price
-                amount = (proceeds - result.relieved_cost) * facing
-            self._realize(instrument_id, currency, amount)
+                amount = (result.proceeds - result.relieved_cost) * facing
+            self._realize(instrument.id, instrument.quote_currency, amount)
 
     def apply(self, record: LogRecord[Event], record_hash: bytes) -> tuple[Event, ...]:
         """Fold ``record`` (with its chain hash) into the account; return the derived events.
@@ -452,7 +470,7 @@ class Portfolio:
         elif isinstance(event, (OptionExercise, OptionAssignment)):
             self._exercise(event, now)
         elif isinstance(event, OptionExpiry):
-            self._close(event.instrument_id)
+            self._expire_option(event, now)
         elif isinstance(event, CouponPayment):
             bond = self._version(event.instrument_id, event.ts_event_ns, now, Bond)
             posting = coupon_posting(event, bond, self._quantity(bond.id), self._account)
@@ -532,7 +550,7 @@ class Portfolio:
         if isinstance(instrument, (CryptoSpot, FxPair)):
             lots = self._lots_of(instrument, instrument.quote_currency)
             self._post(spot_fill_postings(fill, instrument, self._account, lots.position))
-            self._trade(lots, instrument.id, instrument.quote_currency, quantity, fill.price)
+            self._trade(lots, instrument, quantity, fill.price)
             if isinstance(instrument, FxPair):
                 self._pending_fx.append(pending_fx(fill, instrument))
         elif isinstance(instrument, (Equity, Bond)):
@@ -577,7 +595,7 @@ class Portfolio:
         with exact():
             unit_value = price * instrument.multiplier
         lots = self._lots_of(instrument, instrument.quote_currency)
-        self._trade(lots, instrument.id, instrument.quote_currency, quantity, unit_value)
+        self._trade(lots, instrument, quantity, unit_value)
 
     def _future_fill(self, future: Future, fill: Fill) -> None:
         entry = self._futures_entry(future.id)
@@ -684,6 +702,14 @@ class Portfolio:
     def _close(self, instrument_id: InstrumentId) -> None:
         self._lots.pop(instrument_id, None)
 
+    def _expire_option(self, expiry: OptionExpiry, now: int) -> None:
+        """Close the position at proceeds 0, realizing the premium (amendment 13)."""
+        lots = self._lots.get(expiry.instrument_id)
+        if lots is not None and not lots.position.is_zero():
+            option = self._version(expiry.instrument_id, expiry.ts_event_ns, now, Option)
+            self._trade(lots, option, -lots.position, Decimal(0))
+        self._close(expiry.instrument_id)
+
     # --- options --------------------------------------------------------------------------------
     def _exercise(self, event: OptionExercise | OptionAssignment, now: int) -> None:
         option = self._version(event.instrument_id, event.ts_event_ns, now, Option)
@@ -697,18 +723,54 @@ class Portfolio:
             event, option, self._account, reference=self._reference, known_ns=self._known(now)
         )
         self._post(result.postings)
-        self._lots_of(option, option.quote_currency).trade(closing, Decimal(0))
+        lots = self._lots_of(option, option.quote_currency)
+        delivery = result.delivery
+        if delivery is None:  # cash-settled: proceeds = the cash settlement amount
+            value = event.exercise_settlement_value
+            if value is None:  # pragma: no cover - exercise_effect refuses it
+                raise PortfolioError(f"cash-settled {option.id} without a settlement value")
+            per_contract = cash_settlement_amount(option, Decimal(1), value)
+            self._trade(lots, option, closing, per_contract)
+        else:
+            self._deliver(event, option, lots, delivery, now)
         if self._quantity(option.id).is_zero():
             self._close(option.id)
-        delivery = result.delivery
-        if delivery is None:
-            return
+
+    def _deliver(
+        self,
+        event: OptionExercise | OptionAssignment,
+        option: Option,
+        lots: Lots,
+        delivery: Delivery,
+        now: int,
+    ) -> None:
+        """Close the option and trade the underlying, carrying the option's cost (amendment 13).
+
+        Into an equity the delivered units are worth strike x units plus the
+        option's relieved cost for a call (bought: basis; sold: amount realized),
+        minus it for a put. Into a future the option closes at proceeds 0 (its
+        cost realized at once): a future's P&L is its variation, which no lot cost
+        enters.
+        """
+        closing = -event.quantity if isinstance(event, OptionExercise) else event.quantity
         underlying = self._reference.as_of(
             delivery.instrument_id, event.ts_event_ns, self._known(now)
         )
         if isinstance(underlying, Equity):
-            self._trade_at_value(underlying, delivery.quantity, delivery.price)
+            closed = lots.trade(closing, Decimal(0))
+            cost = closed.relieved_cost
+            moved = cost if option.right is OptionRight.CALL else -cost
+            with exact():
+                value = delivery.price * underlying.multiplier * abs(delivery.quantity) + moved
+            self._trade(
+                self._lots_of(underlying, underlying.quote_currency),
+                underlying,
+                delivery.quantity,
+                delivery.price,
+                value=value,
+            )
         elif isinstance(underlying, Future):
+            self._trade(lots, option, closing, Decimal(0))
             state = self._futures.setdefault(underlying.id, _FutureState())
             state.trades.append((event.ts_event_ns, delivery.quantity, delivery.price))
             self._lots_of(underlying, underlying.quote_currency).trade(

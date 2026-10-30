@@ -51,11 +51,14 @@ class Period(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
             raise InvalidFieldError(f"{self.name} period must end after it starts")
 
 
-class InputRef(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+class InputRef(msgspec.Struct, frozen=True, forbid_unknown_fields=True, omit_defaults=True):
     """One input source of a run and its terms (ADRs 0027-0029).
 
     ``runs_sha256`` hashes the sorted raw SHA-256s of the source's completed
-    ingestion runs in the snapshot; ``bars`` counts the bars used.
+    ingestion runs in the snapshot; ``bars`` counts the bars used; ``rates``
+    counts the reference-rate observations used, given exactly when the source
+    supplies rates (BP6 amendment 13; added within version 2 under Rule W: a
+    reference without it keeps its bytes).
     """
 
     event_source: str
@@ -68,11 +71,12 @@ class InputRef(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     runs_sha256: str
     bars: int
     gaps: int
+    rates: int | None = None
 
     def __post_init__(self) -> None:
         """Validate the digest and the counts."""
         require_sha256(self.runs_sha256, "runs_sha256")
-        if min(self.runs, self.bars, self.gaps) < 0:
+        if min(self.runs, self.bars, self.gaps, 0 if self.rates is None else self.rates) < 0:
             raise InvalidFieldError("counts must be >= 0")
 
 

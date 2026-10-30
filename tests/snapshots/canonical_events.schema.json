@@ -1622,7 +1622,7 @@
     },
     "InputRef": {
       "additionalProperties": false,
-      "description": "One input source of a run and its terms (ADRs 0027-0029).\n\n``runs_sha256`` hashes the sorted raw SHA-256s of the source's completed\ningestion runs in the snapshot; ``bars`` counts the bars used.",
+      "description": "One input source of a run and its terms (ADRs 0027-0029).\n\n``runs_sha256`` hashes the sorted raw SHA-256s of the source's completed\ningestion runs in the snapshot; ``bars`` counts the bars used; ``rates``\ncounts the reference-rate observations used, given exactly when the source\nsupplies rates (BP6 amendment 13; added within version 2 under Rule W: a\nreference without it keeps its bytes).",
       "properties": {
         "availability": {
           "type": "string"
@@ -1641,6 +1641,17 @@
         },
         "profile": {
           "type": "string"
+        },
+        "rates": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "runs": {
           "type": "integer"

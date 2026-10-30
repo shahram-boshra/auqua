@@ -35,7 +35,7 @@ from auqua.analytics.splits import SplitError, purged_kfold, walk_forward
 from auqua.analytics.trials import config_hash
 from auqua.config.base import Environment
 from auqua.config.loader import LoadedConfig, load
-from auqua.config.portfolio import PortfolioConfig
+from auqua.config.portfolio import PortfolioConfig, RateSource
 from auqua.contracts.events.account import CashTransfer
 from auqua.contracts.events.base import Event, LogRecord
 from auqua.contracts.events.market import Bar, ReferenceRate
@@ -780,8 +780,35 @@ def test_the_equity_series_refuses_other_currencies_and_classes() -> None:
         contract_type=PerpetualType.INVERSE,
         funding_interval_ns=8 * 3_600 * 10**9,
     )
-    with pytest.raises(EngineError, match="no research equity"):
+    with pytest.raises(EngineError, match=r"no research equity for a PerpetualSwap \(crypto"):
         Simulation(swap, 2, 3, settings, uuid.UUID(int=1), market_of(bars, PORTFOLIO))
+
+
+def test_a_rate_series_records_its_own_count(tmp_path: Path) -> None:
+    """Amendment 13: a rate source counts its observations (never 0 bars); bars stay bars."""
+    series = SeriesId("FRB", "H10/RXI_N.B.JA")
+    observations = [
+        ReferenceRate(
+            id=derived_id(NAMESPACE, b"jpy", day.to_bytes(8, "big")),
+            source="ingest/frb/h10",
+            ts_event_ns=T0 + day * DAY,
+            ts_ingest_ns=T0 + day * DAY,
+            series_id=series,
+            value=Decimal(150),
+            unit="JPY per USD",
+            ts_published_ns=T0 + day * DAY,
+        )
+        for day in range(3)
+    ]
+    lab = make_lab(tmp_path, synthetic_bars(30, seed=3))
+    lab.append(list(observations))
+    with lab.reader() as reader:
+        rates = {"JPY": RateSource(series=str(series))}
+        inputs = snapshot(reader, SYNTH.id, lab.loaded.config.ingestion, rates=rates)
+    by_source = {ref.event_source: ref for ref in inputs.inputs}
+    assert (by_source["ingest/frb/h10"].bars, by_source["ingest/frb/h10"].rates) == (0, 3)
+    assert (by_source["ingest/synthetic"].bars, by_source["ingest/synthetic"].rates) == (30, None)
+    assert list(inputs.market.rates(series, known_ns=inputs.knowledge_ns)) == observations
 
 
 def test_a_run_needs_its_currencies_configured(lab: Lab) -> None:

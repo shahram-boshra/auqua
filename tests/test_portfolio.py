@@ -154,6 +154,27 @@ def test_relief_parts_sum_to_the_lot_cost(
     assert lots.position == 0
 
 
+def test_trade_at_value_splits_the_value_exactly() -> None:
+    """Amendment 13: relieved units take their share of the value; the opened lot the rest."""
+    lots = Lots(CENT)
+    lots.trade(Decimal(3), Decimal(10))
+    result = lots.trade_at_value(Decimal(-5), Decimal(100))
+    assert (result.proceeds, result.relieved_cost, result.opened) == (
+        Decimal(60),
+        Decimal(30),
+        Decimal(2),
+    )
+    assert (lots.position, lots.cost) == (Decimal(-2), Decimal(40))
+    lots = Lots(CENT)
+    lots.trade(Decimal(1), Decimal(10))
+    result = lots.trade_at_value(Decimal(-3), Decimal(100))  # 100 / 3 does not terminate
+    assert result.proceeds == Decimal("33.33")
+    assert result.proceeds + lots.cost == Decimal(100)
+    (lot,) = lots.lots()
+    assert (lot.total_cost, lot.unit_cost) == (Decimal("66.67"), Decimal("33.335"))
+    assert lots.trade(Decimal(1), Decimal(1)).proceeds == Decimal(1)
+
+
 def test_relief_without_a_split_never_rounds() -> None:
     """A lot opened at a fill price relieves unit_cost * u exactly (PC-10)."""
     lots = Lots(CENT)
