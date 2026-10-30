@@ -37,6 +37,7 @@ from auqua.portfolio.allocation import (
     SIGMA_INCREMENT,
     FixedQuantity,
     FixedQuantitySpec,
+    Proposal,
     ProposedTarget,
     Unavailable,
     VolatilityTarget,
@@ -509,6 +510,27 @@ def test_no_proposal_is_reported_with_its_reason(
 ) -> None:
     """Nothing is estimated (P4; amendments 2 and 10): each reason, checked in order."""
     assert _one(_target(), instrument_id, equity=equity) == Unavailable(instrument_id, reason)
+
+
+@pytest.mark.parametrize(
+    ("instrument_id", "equity", "at"),
+    [
+        (SPY, None, T),
+        (SPY, Decimal(0), T),
+        (NOBARS, C, T),
+        (ZERO, C, T),
+        (GBP, C, T),
+        (FLAT, C, T),
+        (SPY, C, T - 1),
+    ],
+    ids=["incomplete", "not-positive", "no-price", "zero-price", "no-rate", "invalid", "warmup"],
+)
+def test_direction_zero_is_a_zero_target_under_every_unavailable_condition(
+    instrument_id: InstrumentId, equity: Decimal | None, at: int
+) -> None:
+    """Amendment 11 (2): closing needs no size; never blocked by a missing input."""
+    proposal = _target().propose([_signal(instrument_id, 0)], _view(equity, at))
+    assert proposal == Proposal((ProposedTarget(instrument_id, Decimal(0)),), ())
 
 
 def test_warmup_counts_daily_returns() -> None:

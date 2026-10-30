@@ -18,6 +18,7 @@ from auqua.contracts.errors import InvalidFieldError
 from auqua.contracts.events.base import Event
 from auqua.contracts.identity import InstrumentId
 from auqua.contracts.instruments import CURRENCY_CODE
+from auqua.contracts.portfolio import Conversion
 from auqua.contracts.validation import (
     require_decimals,
     require_match,
@@ -93,12 +94,19 @@ class Signal(Event, frozen=True, tag="alpha.signal.v1"):
             raise InvalidFieldError(f"direction must be -1, 0 or 1, got {self.direction}")
 
 
-class Target(Event, frozen=True, tag="portfolio.target.v1"):
-    """Target position (signed quantity) for one instrument."""
+class Target(Event, frozen=True, tag="portfolio.target.v1", omit_defaults=True):
+    """Target position (signed quantity) for one instrument.
+
+    ``conversion`` is the rate's conversion an allocator used to value one unit
+    in USD (BP6 section 4.9: recorded for audit, its rounded value unused). Added
+    within version 1 under Rule W (BP6 amendment 11): absent, it is not encoded,
+    so stored targets keep their bytes.
+    """
 
     causation_id: uuid.UUID
     instrument_id: InstrumentId
     quantity: Decimal
+    conversion: Conversion | None = None
 
     def __post_init__(self) -> None:
         """Validate the quantity."""

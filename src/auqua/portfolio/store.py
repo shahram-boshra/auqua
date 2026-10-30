@@ -9,7 +9,9 @@ hash of the last record) and with the SHA-256 of its own contents. Decimals are
 stored as their exact text, ``str(value)`` — the event codec's encoding
 (ADR 0014) — never as scaled integers: the fold's values have no fixed scale
 (amendment 8, F-S; ADR 0034 records the exception to ADR 0023). Postings are
-stored with the balances; the balances must equal their sums (F-U).
+stored with the balances; the balances must equal their sums (F-U). Projection
+schema 2 (amendment 12, F-AF) adds the realized P&L per (instrument,
+currency); a schema-1 projection is rebuilt.
 
 At start the projection is valid only if (BP6 C8, D5): its schema, the
 configuration identity (ADR 0020 ``config_id``) and the code identifier it was
@@ -71,7 +73,7 @@ from auqua.storage.replay import EventLogReader
 from auqua.storage.store import StoreMigrations
 
 #: Version of the projection's tables and their meaning; another value → rebuild.
-PROJECTION_SCHEMA = "1"
+PROJECTION_SCHEMA = "2"
 
 _TABLES: tuple[tuple[str, str, str], ...] = (
     # (name, columns, order of the canonical content hash)
@@ -135,17 +137,35 @@ _TABLES: tuple[tuple[str, str, str], ...] = (
     ("portfolio_results", "position INTEGER PRIMARY KEY, result BLOB NOT NULL", "position"),
     ("portfolio_open_breaks", "result_id TEXT PRIMARY KEY", "result_id"),
     ("portfolio_derived", "position INTEGER PRIMARY KEY, event BLOB NOT NULL", "position"),
+    (
+        "portfolio_realized",
+        "instrument TEXT NOT NULL, currency TEXT NOT NULL, amount TEXT NOT NULL, "
+        "PRIMARY KEY (instrument, currency)",
+        "instrument, currency",
+    ),
 )
+#: Tables added by store version 2 (amendment 12, F-AF); version 1 creates the others.
+_ADDED_IN_2 = frozenset({"portfolio_realized"})
 
 
 def _create_tables(connection: sqlite3.Connection) -> None:
+    """Store version 1: every table but those added later."""
     for name, columns, _ in _TABLES:
-        connection.execute(f"CREATE TABLE {name} ({columns}) STRICT")
+        if name not in _ADDED_IN_2:
+            connection.execute(f"CREATE TABLE {name} ({columns}) STRICT")
+
+
+def _add_realized(connection: sqlite3.Connection) -> None:
+    """Store version 2: the realized P&L table."""
+    for name, columns, _ in _TABLES:
+        if name in _ADDED_IN_2:
+            connection.execute(f"CREATE TABLE {name} ({columns}) STRICT")
 
 
 #: The transactional-store migrations of the portfolio projection (BP3 ADR 0023).
-MIGRATIONS = StoreMigrations(current=1)
+MIGRATIONS = StoreMigrations(current=2)
 MIGRATIONS.register(0, _create_tables)
+MIGRATIONS.register(1, _add_realized)
 
 
 class ProjectionInvalidError(PortfolioError):
@@ -258,6 +278,7 @@ def _rows(state: PortfolioState, config: PortfolioConfig) -> dict[str, list[tupl
         "portfolio_results": [(n, encode(r)) for n, r in enumerate(state.results)],
         "portfolio_open_breaks": [(str(r.id),) for r in _open_breaks(state.results)],
         "portfolio_derived": [(n, encode(e)) for n, e in enumerate(state.derived)],
+        "portfolio_realized": [(str(i), c, _text(a)) for i, c, a in state.realized],
     }
     return rows
 
@@ -390,6 +411,10 @@ def _state(connection: sqlite3.Connection, meta: dict[str, str]) -> PortfolioSta
             _event(r, ReconciliationResult) for _, r in table("portfolio_results", "position")
         ),
         derived=tuple(_event(e, Event) for _, e in table("portfolio_derived", "position")),
+        realized=tuple(
+            (InstrumentId.parse(i), currency, _decimal(amount))
+            for i, currency, amount in table("portfolio_realized", "instrument, currency")
+        ),
     )
 
 

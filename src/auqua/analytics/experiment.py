@@ -18,6 +18,7 @@
 only function that does, and each call is a counted trial.
 """
 
+import dataclasses
 import hashlib
 import statistics
 import uuid
@@ -31,7 +32,15 @@ import msgspec
 
 from auqua.analytics import robustness as rb
 from auqua.analytics import stats
-from auqua.analytics.engine import SOURCE, Settings, Simulation
+from auqua.analytics.engine import (
+    SOURCE,
+    RunMarket,
+    Settings,
+    Simulation,
+    require_run_configuration,
+    run_market,
+    run_rates,
+)
 from auqua.analytics.inputs import InputSnapshot, snapshot
 from auqua.analytics.integrity import (
     ReportInputs,
@@ -154,25 +163,11 @@ def _configuration(spec: ExperimentSpec, fast: int, slow: int, delay: int = 0) -
     )
 
 
-def _fixed_quantity(spec: ExperimentSpec) -> Decimal:
-    """The fixed quantity; ``volatility_target`` needs the account view, wired in BP6 S11.
-
-    Raises:
-        ExperimentError: the allocation is not ``fixed_quantity``.
-    """
-    allocation = spec.allocation
-    if not isinstance(allocation, FixedQuantitySpec):
-        raise ExperimentError(
-            f"allocation {allocation.method!r} is not run before BP6 S11 (amendment 10, F-Z)"
-        )
-    return allocation.quantity
-
-
 def _settings(
     spec: ExperimentSpec, limits: TradingLimits, factor: Decimal = Decimal(1)
 ) -> Settings:
     costs = FixedBps(spec.fee_bps, spec.slippage_bps, spec.fee_increment).scaled(factor)
-    return Settings(_fixed_quantity(spec), spec.initial_cash, costs, limits)
+    return Settings(spec.allocation, spec.initial_cash, costs, limits)
 
 
 def _simulate(  # noqa: PLR0913 - one simulation's inputs
@@ -183,8 +178,9 @@ def _simulate(  # noqa: PLR0913 - one simulation's inputs
     slow: int,
     settings: Settings,
     rid: uuid.UUID,
+    market: RunMarket,
 ) -> Simulation:
-    return Simulation(instrument, fast, slow, settings, rid).run(bars)
+    return Simulation(instrument, fast, slow, settings, rid, market).run(bars)
 
 
 def _sharpe(values: Sequence[float]) -> float:
@@ -267,15 +263,26 @@ def _snapshot(
     spec: ExperimentSpec,
     loaded: LoadedConfig[TradingLimits],
     input_records: int | None,
-) -> InputSnapshot:
-    return snapshot(
+    instrument: AnyInstrument,
+) -> tuple[InputSnapshot, RunMarket]:
+    """The input snapshot and the run's market (BP6 amendment 12, F-AE, F-AG).
+
+    Raises:
+        ConfigurationError: before the snapshot, a currency or rate the run
+            needs is missing from ``portfolio``.
+    """
+    portfolio = loaded.config.portfolio
+    require_run_configuration(portfolio, instrument, spec.allocation)
+    inputs = snapshot(
         reader,
         InstrumentId.parse(spec.instrument_id),
         loaded.config.ingestion,
         interval_ns=spec.interval_ns,
         event_source=spec.event_source,
         input_records=input_records,
+        rates=run_rates(portfolio, instrument, spec.allocation),
     )
+    return inputs, run_market(portfolio, inputs, instrument)
 
 
 def _daily(series: Series, period: Period) -> list[float]:
@@ -366,9 +373,8 @@ def run_experiment(  # noqa: PLR0913, PLR0915 - the steps of the module docstrin
     """
     if str(instrument.id) != spec.instrument_id:
         raise ExperimentError(f"spec is for {spec.instrument_id}, not {instrument.id}")
-    _fixed_quantity(spec)
     code = code or current_code_id()
-    inputs = _snapshot(reader, spec, loaded, input_records)
+    inputs, market = _snapshot(reader, spec, loaded, input_records, instrument)
     train, validation, _ = spec.periods()
     bars = _bars_in(inputs, train.start_ns, validation.end_ns)
     if len(bars) < 4:  # noqa: PLR2004 - two returns per period at least
@@ -379,7 +385,13 @@ def run_experiment(  # noqa: PLR0913, PLR0915 - the steps of the module docstrin
     candidates: list[Candidate] = []
     for fast, slow in grid:
         simulation = _simulate(
-            instrument, bars, fast=fast, slow=slow, settings=_settings(spec, limits), rid=rid
+            instrument,
+            bars,
+            fast=fast,
+            slow=slow,
+            settings=_settings(spec, limits),
+            rid=rid,
+            market=market,
         )
         series = _series(simulation, spec.initial_cash)
         val = series.within(validation)
@@ -430,11 +442,15 @@ def run_experiment(  # noqa: PLR0913, PLR0915 - the steps of the module docstrin
         sweeps: dict[str, float] = {}
         for name, factor, delay, sweep_bars in sweeps_spec:
             settings = _settings(spec, limits, factor)
-            settings = Settings(
-                settings.quantity, settings.initial_cash, settings.costs, settings.limits, delay
-            )
+            settings = dataclasses.replace(settings, delay_bars=delay)
             sim = _simulate(
-                instrument, sweep_bars, fast=c.fast, slow=c.slow, settings=settings, rid=rid
+                instrument,
+                sweep_bars,
+                fast=c.fast,
+                slow=c.slow,
+                settings=settings,
+                rid=rid,
+                market=market,
             )
             sweeps[name] = _sharpe(_series(sim, spec.initial_cash).within(validation))
         sweeps[rb.FIRST_HALF] = _sharpe(c.series.within(halves[0]))
@@ -606,16 +622,17 @@ def evaluate_test(  # noqa: PLR0913 - the experiment plus the configuration to t
     """
     if configuration not in spec.signal.configurations():
         raise ExperimentError(f"{configuration} is not in the grid")
-    _fixed_quantity(spec)
     code = code or current_code_id()
-    inputs = _snapshot(reader, spec, loaded, input_records)
+    inputs, market = _snapshot(reader, spec, loaded, input_records, instrument)
     train, _, test = spec.periods()
     bars = _bars_in(inputs, train.start_ns, test.end_ns)
     fast, slow = configuration
     configuration_hash = _configuration(spec, fast, slow)
     rid = _run_id(inputs, instrument, spec, loaded, code, TEST_EVALUATION, configuration_hash)
     settings = _settings(spec, loaded.risk_limits.limits)
-    simulation = _simulate(instrument, bars, fast=fast, slow=slow, settings=settings, rid=rid)
+    simulation = _simulate(
+        instrument, bars, fast=fast, slow=slow, settings=settings, rid=rid, market=market
+    )
     values = _series(simulation, spec.initial_cash).within(test)
     if len(values) < 2:  # noqa: PLR2004
         raise ExperimentError("the test period needs at least two returns")

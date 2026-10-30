@@ -26,7 +26,14 @@ from pathlib import Path
 import msgspec
 from pydantic import Field
 
-from auqua.analytics.engine import SOURCE, Settings, Simulation
+from auqua.analytics.engine import (
+    SOURCE,
+    RunMarket,
+    Settings,
+    Simulation,
+    require_run_configuration,
+    run_market,
+)
 from auqua.analytics.inputs import snapshot
 from auqua.analytics.lineage import code_id as current_code_id
 from auqua.analytics.lineage import code_version, environment, run_id
@@ -38,8 +45,10 @@ from auqua.contracts.events.research import RunStartedV2
 from auqua.contracts.events.trading import Fill, OrderSubmitted, RiskDecision
 from auqua.contracts.instruments import AnyInstrument
 from auqua.contracts.numeric import arithmetic, on_grid
+from auqua.contracts.portfolio import PostingKind
 from auqua.execution.costs import FixedBps
-from auqua.portfolio.book import Book
+from auqua.portfolio.account import Portfolio
+from auqua.portfolio.allocation import FixedQuantitySpec
 from auqua.risk.gate import TradingLimits
 from auqua.storage.eventlog import EventLog
 from auqua.storage.replay import EventLogReader
@@ -74,7 +83,8 @@ class BacktestResult:
     run_log: Path
     started: RunStartedV2
     events: list[Event]
-    book: Book
+    portfolio: Portfolio
+    instrument: AnyInstrument
     final_mark: Decimal
     equity: Decimal
     appended: int
@@ -109,8 +119,10 @@ def run_backtest(
         InputError, NotEligibleError, PermitError: the input is not usable.
     """
     on_grid(spec.quantity, instrument.quantity_increment)
+    allocation = FixedQuantitySpec(quantity=spec.quantity)
     code = code or current_code_id()
     config = loaded.config
+    require_run_configuration(config.portfolio, instrument, allocation)
     inputs = snapshot(reader, instrument.id, config.ingestion)
     head = inputs.head
     spec_id = model_id(spec)
@@ -145,12 +157,13 @@ def run_backtest(
         python_version=env.python_version,
     )
     settings = Settings(
-        quantity=spec.quantity,
+        allocation=allocation,
         initial_cash=spec.initial_cash,
         costs=FixedBps(spec.fee_bps, Decimal(0), spec.fee_increment),
         limits=loaded.risk_limits.limits,
     )
-    run = Simulation(instrument, spec.fast_window, spec.slow_window, settings, rid)
+    market = run_market(config.portfolio, inputs, instrument)
+    run = Simulation(instrument, spec.fast_window, spec.slow_window, settings, rid, market)
     run.run(inputs.bars)
     run_log = config.paths.output_root / "runs" / str(rid) / "event_log.sqlite3"
     timeout = config.storage.busy_timeout_ms
@@ -161,9 +174,10 @@ def run_backtest(
         run_log=run_log,
         started=started,
         events=run.events,
-        book=run.book,
+        portfolio=run.portfolio,
+        instrument=instrument,
         final_mark=run.mark,
-        equity=run.book.equity(run.mark),
+        equity=run.equity_at(run.mark),
         appended=result.appended,
         duplicates=result.duplicates,
     )
@@ -189,8 +203,17 @@ def report_data(result: BacktestResult, spec: BacktestSpec) -> ReportData:
         for fill in result.events
         if isinstance(fill, Fill)
     ]  # fmt: skip
+    quote = result.instrument.quote_currency
     with arithmetic():
         pnl = result.equity - spec.initial_cash
+        fees = -sum(
+            (
+                p.amount
+                for p in result.portfolio.postings
+                if p.kind is PostingKind.FEE and p.currency == quote
+            ),
+            Decimal(0),
+        )
     return ReportData(
         title=f"Backtest {result.run_id}",
         lineage=[
@@ -205,12 +228,15 @@ def report_data(result: BacktestResult, spec: BacktestSpec) -> ReportData:
         ],
         summary=[
             ("initial cash", str(spec.initial_cash)),
-            ("final position", str(result.book.position)),
+            ("final position", str(result.portfolio.quantity(result.instrument.id))),
             ("final mark", str(result.final_mark)),
             ("equity", str(result.equity)),
             ("P&L (fees included)", str(pnl)),
-            ("realized P&L (before fees)", str(result.book.realized)),
-            ("fees", str(result.book.fees)),
+            (
+                "realized P&L (before fees)",
+                str(result.portfolio.realized(result.instrument.id, quote)),
+            ),
+            ("fees", str(fees)),
         ],
         order_columns=("order id", "time (ns)", "side", "quantity", "risk", "rule"),
         orders=orders,
@@ -219,10 +245,16 @@ def report_data(result: BacktestResult, spec: BacktestSpec) -> ReportData:
     )
 
 
-def replay_book(reader: EventLogReader, initial_cash: Decimal) -> Book:
-    """Rebuild the book of a run from the fills in its log."""
-    book = Book(cash=initial_cash)
-    for record in reader.records():
-        if isinstance(record.event, Fill):
-            book.apply(record.event)
-    return book
+def replay_portfolio(reader: EventLogReader, market: RunMarket) -> Portfolio:
+    """Rebuild a run's account by folding its run log (real log sequences and hashes).
+
+    ``market`` is the run's (its input snapshot's view, instrument index and
+    knowledge time); the run log itself holds the transfer, orders, decisions
+    and fills.
+    """
+    portfolio = Portfolio(
+        market.config, market.view, market.reference, knowledge_ns=market.knowledge_ns
+    )
+    for record, digest in reader.records_with_hashes():
+        portfolio.apply(record, digest)
+    return portfolio

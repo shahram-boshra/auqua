@@ -420,7 +420,68 @@ def test_market_view_matches_a_brute_force_oracle(
     view = MarketView(LogRecord(i, e) for i, e in enumerate(events))
     eligible = [e for e in events if e.ts_ingest_ns <= known]
     expected = [max(eligible, key=lambda e: e.revision)] if eligible else []
-    assert view.rates(series, known_ns=known) == expected
+    assert list(view.rates(series, known_ns=known)) == expected
+
+
+@given(
+    st.lists(
+        st.tuples(st.integers(0, 20), st.integers(0, 3), st.integers(0, 40), st.integers(0, 40)),
+        min_size=1,
+        max_size=12,
+        unique_by=lambda item: (item[0], item[1]),
+    ),
+    st.integers(0, 40),
+    st.integers(0, 60),
+)
+def test_indexed_release_equals_the_linear_rule(
+    rows: list[tuple[int, int, int, int]], known: int, t: int
+) -> None:
+    """BP6 amendment 12 (F-AD): the bisected prefix equals filtering by availability."""
+    series = SeriesId("UST", "PAR/10Y")
+    events = [
+        ReferenceRate(
+            id=revision_id(bar_id("s", str(observed), 1, 1), revision),
+            source="ingest/test",
+            ts_event_ns=observed,
+            ts_ingest_ns=ingest,
+            series_id=series,
+            value=Decimal(revision),
+            unit="percent",
+            ts_published_ns=observed + published,
+            revision=revision,
+        )
+        for observed, revision, ingest, published in rows
+    ]
+    view = MarketView(LogRecord(i, e) for i, e in enumerate(events))
+    linear = [r for r in view.rates(series, known_ns=known) if available_ns(r) <= t]
+    assert list(view.released_rates(series, at_ns=t, known_ns=known)) == linear
+
+
+def test_resolved_series_cache_is_bounded() -> None:
+    """One resolved list per series, however often the knowledge time advances (F-AD)."""
+    instrument = InstrumentId("COINBASE", "BTC-USD")
+    bars = [
+        Bar(
+            id=bar_id("s", "k", 60, i),
+            source="ingest/test",
+            ts_event_ns=(i + 1) * 60,
+            ts_ingest_ns=(i + 1) * 60,
+            instrument_id=instrument,
+            start_ns=i * 60,
+            interval_ns=60,
+            open=Decimal(1),
+            high=Decimal(1),
+            low=Decimal(1),
+            close=Decimal(1),
+            volume=Decimal(1),
+        )
+        for i in range(50)
+    ]
+    view = MarketView(LogRecord(i, b) for i, b in enumerate(bars))
+    for known in range(0, 3_000, 60):
+        released = view.released_bars(instrument, 60, at_ns=known, known_ns=known)
+        assert len(released) == known // 60
+    assert view.cached_series() == 1
 
 
 # --- J5 checksums --------------------------------------------------------------------------------

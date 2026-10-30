@@ -7,9 +7,11 @@ instrument versions, its specification) and is pure: :meth:`Allocator.propose`
 reads the signals and an :class:`~auqua.contracts.portfolio.AccountView` and
 returns a :class:`Proposal` of plain rows; the caller makes the
 ``portfolio.target.v1`` and ``portfolio.allocation_unavailable.v1`` events with
-its run-scoped ids (ADR 0025; amendment 10, F-Y). The decision time and the
-knowledge time are the view's ``as_of_ns``. A proposal above a risk limit is
-cut by the pre-trade gate (BP7), never here.
+its run-scoped ids (ADR 0025; amendment 10, F-Y). The decision time is the
+view's ``as_of_ns``; the knowledge time is the allocator's ``knowledge_ns``
+when given (a backtest: its input snapshot's; amendment 12, F-AB), else the
+decision time (live). A proposal above a risk limit is cut by the pre-trade
+gate (BP7), never here.
 
 - :class:`FixedQuantity`: ``quantity x direction`` (the walking skeleton; PC-10).
 - :class:`VolatilityTarget`: ``q = direction x C x sigma* / (sigma_hat x N)``, capped by
@@ -44,7 +46,7 @@ from auqua.contracts.portfolio import BASE_CURRENCY, AccountView, Conversion
 from auqua.portfolio.errors import PortfolioError
 from auqua.portfolio.series import NS_PER_DAY, daily_last, periods_per_year, simple_returns
 from auqua.portfolio.valuation import Valuation, latest_close
-from auqua.storage.marketview import MarketView, available_ns, released
+from auqua.storage.marketview import MarketView, available_ns
 from auqua.storage.reference import ReferenceIndex
 
 #: Increment of sigma_hat in trading state, rounded away from zero (ADR 0037; C9).
@@ -136,8 +138,10 @@ def _distinct(signals: Sequence[Signal]) -> None:
         raise PortfolioError("one signal per instrument")
 
 
-def _instrument(reference: ReferenceIndex, instrument_id: InstrumentId, t: int) -> AnyInstrument:
-    instrument = reference.as_of(instrument_id, t, t)
+def _instrument(
+    reference: ReferenceIndex, instrument_id: InstrumentId, t: int, known: int
+) -> AnyInstrument:
+    instrument = reference.as_of(instrument_id, t, known)
     if instrument is None:
         raise PortfolioError(f"{instrument_id} is not defined at {t}")
     return instrument
@@ -146,10 +150,17 @@ def _instrument(reference: ReferenceIndex, instrument_id: InstrumentId, t: int) 
 class FixedQuantity:
     """``quantity x direction``, on the instrument's quantity grid."""
 
-    def __init__(self, spec: FixedQuantitySpec, reference: ReferenceIndex) -> None:
-        """Bind the quantity and the instrument versions."""
+    def __init__(
+        self,
+        spec: FixedQuantitySpec,
+        reference: ReferenceIndex,
+        *,
+        knowledge_ns: int | None = None,
+    ) -> None:
+        """Bind the quantity, the instrument versions and the knowledge time (``None``: live)."""
         self._spec = spec
         self._reference = reference
+        self._knowledge_ns = knowledge_ns
 
     def propose(self, signals: Sequence[Signal], view: AccountView) -> Proposal:
         """One target per signal.
@@ -161,7 +172,9 @@ class FixedQuantity:
         _distinct(signals)
         targets = []
         for signal in signals:
-            instrument = _instrument(self._reference, signal.instrument_id, view.as_of_ns)
+            t = view.as_of_ns
+            known = t if self._knowledge_ns is None else self._knowledge_ns
+            instrument = _instrument(self._reference, signal.instrument_id, t, known)
             on_grid(self._spec.quantity, instrument.quantity_increment)
             with exact():
                 quantity = self._spec.quantity * signal.direction
@@ -169,20 +182,23 @@ class FixedQuantity:
         return Proposal(tuple(targets), ())
 
 
-def daily_closes(market: MarketView, instrument_id: InstrumentId, t: int) -> list[Decimal]:
+def daily_closes(
+    market: MarketView, instrument_id: InstrumentId, t: int, known_ns: int | None = None
+) -> list[Decimal]:
     """Closes of the UTC days ended at ``t``, oldest first (BP6 section 4.9 D2; amendment 10, F-V).
 
     A close's day is that of its interval end, ``(ts_event_ns - 1) // NS_PER_DAY``;
     it is used at ``t`` when it is released (``available_ns <= t``, as known at
-    ``t``) and its day has ended (``(day + 1) x NS_PER_DAY <= t``). Per day, the
-    close of the bar ending last (at equal end, the later available, then the
-    later start) across the instrument's bar series.
+    ``known_ns``, default ``t``) and its day has ended (``(day + 1) x NS_PER_DAY
+    <= t``). Per day, the close of the bar ending last (at equal end, the later
+    available, then the later start) across the instrument's bar series.
     """
+    known = t if known_ns is None else known_ns
     bars: list[Bar] = [
         bar
         for listed, interval in market.bar_series()
         if listed == instrument_id
-        for bar in released(market.bars(listed, interval, known_ns=t), t)
+        for bar in market.released_bars(listed, interval, at_ns=t, known_ns=known)
         if ((bar.ts_event_ns - 1) // NS_PER_DAY + 1) * NS_PER_DAY <= t
     ]
     bars.sort(key=lambda bar: (bar.ts_event_ns, available_ns(bar), bar.start_ns))
@@ -227,12 +243,17 @@ class VolatilityTarget:
         market: MarketView,
         valuation: Valuation,
         reference: ReferenceIndex,
+        knowledge_ns: int | None = None,
     ) -> None:
-        """Bind the parameters, the market data, the rates and the instrument versions."""
+        """Bind the parameters, market data, rates, instrument versions and knowledge time.
+
+        ``knowledge_ns`` ``None``: lookups as known at the decision time (live).
+        """
         self._spec = spec
         self._market = market
         self._valuation = valuation
         self._reference = reference
+        self._knowledge_ns = knowledge_ns
 
     def propose(self, signals: Sequence[Signal], view: AccountView) -> Proposal:
         """One target or one unavailable row per signal.
@@ -254,7 +275,8 @@ class VolatilityTarget:
 
     def _one(self, signal: Signal, view: AccountView) -> ProposedTarget | Unavailable:
         t = view.as_of_ns
-        instrument = _instrument(self._reference, signal.instrument_id, t)
+        known = t if self._knowledge_ns is None else self._knowledge_ns
+        instrument = _instrument(self._reference, signal.instrument_id, t, known)
         inverse = isinstance(instrument, PerpetualSwap) and (
             instrument.contract_type is PerpetualType.INVERSE
         )
@@ -262,7 +284,7 @@ class VolatilityTarget:
             raise PortfolioError(f"{instrument.id}: linear perpetuals are refused (BP6 R1)")
         if signal.direction == 0:
             return ProposedTarget(signal.instrument_id, Decimal(0))
-        inputs = self._inputs(instrument, view.equity_base, t, inverse=inverse)
+        inputs = self._inputs(instrument, view.equity_base, t, known, inverse=inverse)
         if isinstance(inputs, AllocationUnavailableReason):
             return Unavailable(signal.instrument_id, inputs)
         equity, unit, conversion, sigma = inputs
@@ -271,7 +293,13 @@ class VolatilityTarget:
         return ProposedTarget(signal.instrument_id, quantity, conversion)
 
     def _inputs(
-        self, instrument: AnyInstrument, equity: Decimal | None, t: int, *, inverse: bool
+        self,
+        instrument: AnyInstrument,
+        equity: Decimal | None,
+        t: int,
+        known: int,
+        *,
+        inverse: bool,
     ) -> tuple[Decimal, Decimal, Conversion | None, Decimal] | AllocationUnavailableReason:
         """C, N in the quote currency, the rate's conversion and sigma_hat; else the reason."""
         if equity is None:
@@ -281,7 +309,7 @@ class VolatilityTarget:
         if inverse:
             unit = instrument.multiplier
         else:
-            price = latest_close(self._market, instrument.id, t, t)
+            price = latest_close(self._market, instrument.id, t, known)
             if price is None:
                 return AllocationUnavailableReason.PRICE_UNAVAILABLE
             with exact():
@@ -289,12 +317,12 @@ class VolatilityTarget:
         conversion = None
         if instrument.quote_currency != BASE_CURRENCY:
             conversion = self._valuation.convert(
-                unit, instrument.quote_currency, at_ns=t, known_ns=t
+                unit, instrument.quote_currency, at_ns=t, known_ns=known
             )
             if conversion is None:
                 return AllocationUnavailableReason.RATE_UNAVAILABLE
         sigma = volatility(
-            daily_closes(self._market, instrument.id, t),
+            daily_closes(self._market, instrument.id, t, known),
             half_life=self._spec.half_life_days,
             window=self._spec.warmup_days,
             periods_per_year=periods_per_year(instrument.asset_class),
@@ -336,8 +364,11 @@ def allocator(
     market: MarketView,
     valuation: Valuation,
     reference: ReferenceIndex,
+    knowledge_ns: int | None = None,
 ) -> Allocator:
-    """The allocator of ``spec``."""
+    """The allocator of ``spec``, looking up as known at ``knowledge_ns`` (``None``: live)."""
     if isinstance(spec, FixedQuantitySpec):
-        return FixedQuantity(spec, reference)
-    return VolatilityTarget(spec, market=market, valuation=valuation, reference=reference)
+        return FixedQuantity(spec, reference, knowledge_ns=knowledge_ns)
+    return VolatilityTarget(
+        spec, market=market, valuation=valuation, reference=reference, knowledge_ns=knowledge_ns
+    )

@@ -177,8 +177,23 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   price). Experiment specification version 2: `allocation` is
   `fixed_quantity` or `volatility_target`; version-1 documents (with or
   without `spec_version`) are upgraded on load, and migration registries name
-  their version key. Experiments run `fixed_quantity` only until the engine
-  uses the account (S11).
+  their version key.
+- The research engine runs on the account (BP6 S11, amendments 11 and 12): a
+  simulation folds its events into a `Portfolio` as its own run-local chain,
+  is funded by one `account.transfer.v1` (`initial_cash`), sizes through the
+  allocator (`fixed_quantity` or `volatility_target`; unavailable sizes are
+  recorded as `portfolio.allocation_unavailable.v1`) and checks risk on the
+  account view's quantity plus working orders. The account, valuation and
+  allocators look up as known at the input snapshot's knowledge time; the
+  run's market view holds the snapshot's selected series and, for volatility
+  targeting, the rate sources of its currencies (recorded among the inputs).
+  The equity series stays in the quote currency, exact (identical to BP5). A
+  run requires `portfolio.currencies` for each currency it trades (and rates
+  for volatility targeting). `portfolio.target.v1` records the rate
+  conversion used for a unit's USD value (optional field). The account keeps
+  realized P&L per instrument and currency (projection schema 2, store
+  version 2). Market-view lookups bisect a cached, bounded resolved series.
+  `replay_portfolio` replaces `replay_book`; `Book` is removed.
 
 ### Changed
 

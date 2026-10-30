@@ -31,7 +31,7 @@ from auqua.contracts.instruments import CryptoSpot
 from auqua.contracts.numeric import Rounding, divide, exact, quantize
 from auqua.contracts.portfolio import BASE_CURRENCY, Conversion
 from auqua.portfolio.errors import ConfigurationError
-from auqua.storage.marketview import MarketView, available_ns, released
+from auqua.storage.marketview import MarketView, available_ns
 from auqua.storage.reference import ReferenceIndex
 
 
@@ -49,7 +49,7 @@ def latest_close(
         bars[-1]
         for listed, interval in market.bar_series()
         if listed == instrument_id
-        and (bars := list(released(market.bars(listed, interval, known_ns=known_ns), at_ns)))
+        and (bars := market.released_bars(listed, interval, at_ns=at_ns, known_ns=known_ns))
     ]
     if not candidates:
         return None
@@ -102,7 +102,7 @@ class Valuation:
     def _from_series(
         self, amount: Decimal, currency: str, series: SeriesId, at_ns: int, known_ns: int
     ) -> Conversion | None:
-        observations = list(released(self._market.rates(series, known_ns=known_ns), at_ns))
+        observations = self._market.released_rates(series, at_ns=at_ns, known_ns=known_ns)
         if not observations:
             return None
         rate = observations[-1]

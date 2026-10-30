@@ -70,6 +70,17 @@ class Ledger:
             currency, self._cash.get(currency, zero), self._receivable.get(currency, zero)
         )
 
+    def amounts(self, currency: str) -> tuple[Decimal, Decimal]:
+        """Cash and receivable of ``currency`` as plain values (zero if nothing was posted)."""
+        zero = Decimal(0)
+        return self._cash.get(currency, zero), self._receivable.get(currency, zero)
+
+    def currencies_held(self) -> frozenset[str]:
+        """Currencies whose cash or receivable is not zero."""
+        return frozenset(
+            code for balances in (self._cash, self._receivable) for code, v in balances.items() if v
+        )
+
     def balances(self) -> tuple[Balance, ...]:
         """Every currency with a posting, in increasing code order."""
         codes = sorted(set(self._cash) | set(self._receivable))
