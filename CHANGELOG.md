@@ -161,6 +161,24 @@ and the project uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.
   BP6 amendment 9: the projection is stamped with the configuration identity
   (`config_id`) and the identifier of the code that folded it (passed in by
   the caller); either differing rebuilds it from 0.
+- Allocation (BP6 S10, amendment 10): `auqua.portfolio.allocation` with the
+  `Allocator` protocol, `FixedQuantity` (quantity x direction),
+  `VolatilityTarget` (USD equity x target volatility / (volatility x unit
+  value), capped by the leverage limit, each quotient one exact rational
+  rounded toward zero onto the quantity increment; an inverse perpetual's unit
+  value is its multiplier) and the `Optimizer` protocol (no implementation).
+  The volatility is the exponentially weighted volatility of daily returns
+  (half-life 20, warm-up 270), a close dated by its interval end and used once
+  its day has ended and it is released. No proposal is estimated: each missing
+  input is reported with its reason (`equity_not_positive` added).
+  `auqua.portfolio.series` holds the daily grouping and the simple returns
+  shared with research; `latest_close` is the one "latest price" rule of
+  valuation, the account view and allocation (a non-positive close is no
+  price). Experiment specification version 2: `allocation` is
+  `fixed_quantity` or `volatility_target`; version-1 documents (with or
+  without `spec_version`) are upgraded on load, and migration registries name
+  their version key. Experiments run `fixed_quantity` only until the engine
+  uses the account (S11).
 
 ### Changed
 

@@ -540,6 +540,20 @@ def test_symbol_change_moves_the_lots() -> None:
     assert portfolio.lots(AAPL) is None
 
 
+def test_a_non_positive_close_leaves_the_position_unmarked() -> None:
+    """Amendment 10 (F-Y): the view's mark is ``latest_close``; a zero close is no price."""
+    events = [
+        InstrumentDefined(**_common(1, ct(25, 0)), instrument=INSTRUMENTS[0]),
+        CashTransfer(**_common(9, ct(25, 1)), currency="USD", amount=Decimal(10000), reference="t"),
+        _fill(30, AAPL, Side.BUY, "10", "10.00", ct(26, 9)),
+        _bar(31, AAPL, "11.00", ct(26, 10)),
+    ]
+    marked = _fold(events)[0].view()
+    assert (marked.positions[0].mark, marked.unmarked) == (Decimal("11.00"), ())
+    view = _fold([*events, _bar(32, AAPL, "0", ct(26, 11))])[0].view()
+    assert (view.positions[0].mark, view.unmarked, view.equity_base) == (None, (AAPL,), None)
+
+
 def test_unmarked_position_and_written_option() -> None:
     """An unmarked equity: listed, its currency's margin incomplete, no base total (a72)."""
     head = [

@@ -27,9 +27,11 @@ from auqua.analytics import cli, integrity, stats
 from auqua.analytics import robustness as rb
 from auqua.analytics.engine import Settings, Simulation
 from auqua.analytics.experiment import ExperimentError, evaluate_test, run_experiment
+from auqua.analytics.experiment import _configuration as configuration_hash
 from auqua.analytics.inputs import InputError, snapshot
 from auqua.analytics.spec import ExperimentSpec
 from auqua.analytics.splits import SplitError, purged_kfold, walk_forward
+from auqua.analytics.trials import config_hash
 from auqua.config.base import Environment
 from auqua.config.loader import LoadedConfig, load
 from auqua.contracts.events.base import Event
@@ -42,6 +44,7 @@ from auqua.contracts.instruments import CryptoSpot, Identifiers
 from auqua.execution.costs import FixedBps
 from auqua.execution.simulated import SimulatedVenue
 from auqua.ingestion.errors import NotEligibleError
+from auqua.portfolio.allocation import FixedQuantitySpec, VolatilityTargetSpec
 from auqua.risk.gate import TradingLimits
 from auqua.storage.eventlog import EventLog
 from auqua.storage.marketview import available_ns
@@ -540,6 +543,66 @@ def test_spec_refuses_overlapping_periods() -> None:
         spec(validation={"start": utc(0), "end": utc(2)})
 
 
+VOLATILITY = {"method": "volatility_target", "target_volatility": "0.1", "leverage_cap": "2"}
+
+
+def _v2(**changes: Any) -> ExperimentSpec:  # noqa: ANN401 - test overrides
+    """A version-2 document: ``quantity`` replaced by ``allocation``, version stated."""
+    document = spec().model_dump(mode="json") | changes
+    return ExperimentSpec.model_validate(document, strict=False)
+
+
+def test_spec_version_1_upgrades_to_version_2() -> None:
+    """BP6 T14 (F-Z): no spec_version = version 1; quantity becomes fixed_quantity."""
+    upgraded = spec()
+    assert upgraded.spec_version == 2  # noqa: PLR2004
+    assert upgraded.allocation == FixedQuantitySpec(quantity=Decimal("0.5"))
+    assert _v2() == upgraded
+    target = _v2(allocation=VOLATILITY).allocation
+    assert isinstance(target, VolatilityTargetSpec)
+    assert (target.half_life_days, target.warmup_days) == (20, 270)
+
+
+def test_spec_versions_are_explicit() -> None:
+    """Version 2 states its version; unknown, future or non-integer versions are refused."""
+    document = spec().model_dump(mode="json")
+    unversioned = {k: v for k, v in document.items() if k != "spec_version"}
+    with pytest.raises(ValueError, match="version 1 has no allocation"):
+        ExperimentSpec.model_validate(unversioned, strict=False)
+    for version, message in ((3, "no migration"), ("2", "must be an integer")):
+        with pytest.raises(ValueError, match=message):
+            ExperimentSpec.model_validate(document | {"spec_version": version}, strict=False)
+    with pytest.raises(ValueError, match="quantity"):
+        spec(quantity=None)
+
+
+def test_trial_configuration_hash_keeps_bp5_keys_for_fixed_quantity() -> None:
+    """T15: unchanged hash for fixed_quantity; volatility targeting adds its parameters."""
+    keys = {
+        "provider": "baseline/ma-crossover",
+        "fast": 5,
+        "slow": 20,
+        "fee_bps": "1",
+        "slippage_bps": "1",
+        "delay_bars": 0,
+        "quantity": "0.5",
+    }
+    assert configuration_hash(spec(), 5, 20) == config_hash(keys)
+    target = configuration_hash(_v2(allocation=VOLATILITY), 5, 20)
+    assert target != config_hash(keys)
+    assert target != configuration_hash(_v2(allocation=VOLATILITY | {"warmup_days": 9}), 5, 20)
+
+
+def test_volatility_target_waits_for_s11(lab: Lab) -> None:
+    """Until the engine runs on the account view (BP6 S11), volatility targeting is refused."""
+    target = _v2(allocation=VOLATILITY)
+    with lab.reader() as reader:
+        with pytest.raises(ExperimentError, match="S11"):
+            run_experiment(reader, SYNTH, target, lab.loaded)
+        with pytest.raises(ExperimentError, match="S11"):
+            evaluate_test(reader, SYNTH, target, lab.loaded, configuration=(5, 20))
+
+
 SPEC_TOML = """\
 hypothesis_id = "ma-crossover-synth"
 hypothesis = "A moving-average crossover earns a positive risk-adjusted return."
@@ -631,10 +694,14 @@ def economic_outputs(lab: Lab) -> dict[str, Any]:
     compared as the exact text of their binary values.
     """
     experiment = spec()
+    assert isinstance(experiment.allocation, FixedQuantitySpec)
     bars = [b for b in synthetic_bars(3 * 1_440, seed=11) if available_ns(b) < T0 + 2 * DAY]
     costs = FixedBps(experiment.fee_bps, experiment.slippage_bps, experiment.fee_increment)
     settings = Settings(
-        experiment.quantity, experiment.initial_cash, costs, lab.loaded.risk_limits.limits
+        experiment.allocation.quantity,
+        experiment.initial_cash,
+        costs,
+        lab.loaded.risk_limits.limits,
     )
     simulations: dict[str, Any] = {}
     for fast, slow in experiment.signal.configurations():

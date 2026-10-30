@@ -8,21 +8,51 @@ from the platform configuration and from the evidence (Strategy Module 3).
 Periods are half-open UTC intervals and must be ordered and disjoint:
 train < validation < test. Selection uses train and validation only; the test
 period is read only by :func:`auqua.analytics.experiment.evaluate_test`.
+
+Version 2 (BP6 section 4.9, amendment 10, F-Z) adds ``allocation``, the
+position sizing: ``fixed_quantity`` (version 1's ``quantity``) or
+``volatility_target``. Every document is upgraded before validation through
+:data:`SPEC_MIGRATIONS` (ADR 0020's registry, keyed by ``spec_version``), so
+the command line, the API and the tests take one path. A document without
+``spec_version`` is version 1 (the version-1 model's default); version 2 states
+``spec_version = 2``.
 """
 
 import datetime
 import itertools
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import AwareDatetime, Field, model_validator
 
 from auqua.config.base import ConfigModel
+from auqua.config.errors import UnsupportedVersionError
+from auqua.config.migrate import Document, Migrations
 from auqua.contracts.events.research import Period, PeriodName
+from auqua.portfolio.allocation import AllocationSpec
 
 PositiveInt = Annotated[int, Field(gt=0)]
 NonNegativeInt = Annotated[int, Field(ge=0)]
 _NS_PER_SECOND = 1_000_000_000
+SPEC_VERSION_KEY = "spec_version"
+#: Experiment specification versions (ADR 0020 migrations, keyed by ``spec_version``).
+SPEC_MIGRATIONS = Migrations("experiment spec", current=2, key=SPEC_VERSION_KEY)
+
+
+def _v1_to_v2(document: Document) -> Document:
+    """Version 1's ``quantity`` becomes ``allocation = {method = "fixed_quantity", quantity}``."""
+    if "allocation" in document:
+        raise UnsupportedVersionError(
+            "experiment spec: version 1 has no allocation (state spec_version = 2)"
+        )
+    upgraded = {k: v for k, v in document.items() if k != "quantity"}
+    allocation: dict[str, Any] = {"method": "fixed_quantity"}
+    if "quantity" in document:
+        allocation["quantity"] = document["quantity"]
+    return upgraded | {SPEC_VERSION_KEY: 2, "allocation": allocation}
+
+
+SPEC_MIGRATIONS.register(1, _v1_to_v2)
 
 
 def _ns(moment: datetime.datetime) -> int:
@@ -97,7 +127,8 @@ class ExperimentSpec(ConfigModel):
         event_source: Source of the bars; required when there are several.
         train, validation, test: The periods.
         signal: The configurations to try.
-        quantity: Position held while the signal is +1.
+        allocation: Position sizing (BP6 section 4.9): ``fixed_quantity`` or
+            ``volatility_target``.
         initial_cash: Starting cash in the quote currency.
         fee_bps, slippage_bps, fee_increment: The cost model (ADR 0032).
         validation_method: Walk-forward or purged k-fold.
@@ -107,7 +138,7 @@ class ExperimentSpec(ConfigModel):
         seed: Seed of every random choice.
     """
 
-    spec_version: Literal[1] = 1
+    spec_version: Literal[2]
     hypothesis_id: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
     hypothesis: str = Field(min_length=1)
     instrument_id: str = Field(pattern=r"^[A-Z0-9][A-Z0-9_]*:[^\s:]+$")
@@ -117,7 +148,7 @@ class ExperimentSpec(ConfigModel):
     validation: PeriodSpec
     test: PeriodSpec
     signal: SignalGrid
-    quantity: Annotated[Decimal, Field(gt=0)]
+    allocation: AllocationSpec
     initial_cash: Annotated[Decimal, Field(gt=0)]
     fee_bps: Annotated[Decimal, Field(ge=0)]
     slippage_bps: Annotated[Decimal, Field(ge=0)]
@@ -127,6 +158,18 @@ class ExperimentSpec(ConfigModel):
     pbo_groups: Annotated[int, Field(ge=2)] = 16
     perturbation_drop: Annotated[Decimal, Field(gt=0, lt=1)] = Decimal("0.01")
     seed: NonNegativeInt = 0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _upgrade(cls, data: Any) -> Any:  # noqa: ANN401 - raw input, as pydantic passes it
+        """Upgrade a document to the current version; one without ``spec_version`` is version 1."""
+        if not isinstance(data, dict):
+            return data
+        document = data if SPEC_VERSION_KEY in data else {**data, SPEC_VERSION_KEY: 1}
+        try:
+            return SPEC_MIGRATIONS.upgrade(document)
+        except UnsupportedVersionError as error:
+            raise ValueError(str(error)) from error
 
     @model_validator(mode="after")
     def _periods(self) -> ExperimentSpec:

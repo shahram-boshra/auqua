@@ -167,13 +167,24 @@ class Fill(Event, frozen=True, tag="execution.fill.v1", omit_defaults=True):
 
 
 class AllocationUnavailableReason(StrEnum):
-    """Why an allocator made no proposal for an instrument (BP6 section 4.9, amendment 2)."""
+    """Why an allocator made no proposal for an instrument (BP6 section 4.9, amendments 2 and 10).
+
+    - ``RATE_UNAVAILABLE``: no usable rate for the quote currency.
+    - ``EQUITY_INCOMPLETE``: the account's ``equity_base`` is unavailable.
+    - ``VOLATILITY_WARMUP``: fewer daily returns than the warm-up.
+    - ``VOLATILITY_INVALID``: sigma_hat zero, non-finite or undefined (a non-positive
+      close in the window).
+    - ``PRICE_UNAVAILABLE``: no positive latest price.
+    - ``EQUITY_NOT_POSITIVE``: ``equity_base`` is zero or negative (amendment
+      10, F-W; added within version 1: no stored event used the closed set).
+    """
 
     RATE_UNAVAILABLE = "rate_unavailable"
     EQUITY_INCOMPLETE = "equity_incomplete"
     VOLATILITY_WARMUP = "volatility_warmup"
     VOLATILITY_INVALID = "volatility_invalid"
     PRICE_UNAVAILABLE = "price_unavailable"
+    EQUITY_NOT_POSITIVE = "equity_not_positive"
 
 
 class AllocationUnavailable(Event, frozen=True, tag="portfolio.allocation_unavailable.v1"):
