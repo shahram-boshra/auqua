@@ -108,6 +108,10 @@ class MarketView:
         """The (instrument, interval) pairs that have bars, sorted."""
         return sorted(self._bars, key=lambda key: (str(key[0]), key[1]))
 
+    def rate_series(self) -> list[SeriesId]:
+        """The reference-rate series that have observations, sorted."""
+        return sorted(self._rates, key=str)
+
     def cached_series(self) -> int:
         """Resolved series held (at most one per series; amendment 12 bound)."""
         return len(self._resolved_bars) + len(self._resolved_rates)

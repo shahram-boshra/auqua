@@ -123,7 +123,9 @@ def _head(reader: EventLogReader, input_records: int | None) -> Head:
     return Head(input_records, reader.hash_at(input_records - 1))
 
 
-def _input_ref(profile: SourceProfile, runs: list[IngestRun], bars: int, gaps: int) -> InputRef:
+def _input_ref(
+    profile: SourceProfile, runs: list[IngestRun], bars: int, gaps: int, rates: int | None
+) -> InputRef:
     latest = runs[-1] if runs else None
     digest = hashlib.sha256("\n".join(sorted(r.raw_sha256 for r in runs)).encode()).hexdigest()
     return InputRef(
@@ -137,6 +139,7 @@ def _input_ref(profile: SourceProfile, runs: list[IngestRun], bars: int, gaps: i
         runs_sha256=digest,
         bars=bars,
         gaps=gaps,
+        rates=rates,
     )
 
 
@@ -211,14 +214,27 @@ def snapshot(  # noqa: PLR0913 - every argument narrows the series
             and event.source in used
         ):
             gaps.append(event)
-    per_source = Counter(bar.source for bar in bars)
-    per_source.update(r.event.source for r in rate_records if isinstance(r.event, Bar))
     gap_count = Counter(gap.source for gap in gaps)
+    # Every series counts the records of its own kind it supplies, resolved at the
+    # knowledge time (amendment 13): bars, and the rate observations of a rate source.
+    rate_view = MarketView(rate_records)
+    per_source = Counter(bar.source for bar in bars)
+    for listed, interval in rate_view.bar_series():
+        per_source.update(b.source for b in rate_view.bars(listed, interval, known_ns=knowledge_ns))
+    rate_count: Counter[str] = Counter()
+    for series in rate_view.rate_series():
+        rate_count.update(o.source for o in rate_view.rates(series, known_ns=knowledge_ns))
+    rate_suppliers = {r.event.source for r in rate_records if isinstance(r.event, ReferenceRate)}
     inputs = tuple(
-        _input_ref(p, runs[p.name], per_source[p.event_source], gap_count[p.event_source])
+        _input_ref(
+            p,
+            runs[p.name],
+            per_source[p.event_source],
+            gap_count[p.event_source],
+            rate_count[p.event_source] if p.event_source in rate_suppliers else None,
+        )
         for p in profiles
     )
-    reference = ReferenceIndex.from_records(records)
     return InputSnapshot(
         head,
         knowledge_ns,
@@ -228,5 +244,5 @@ def snapshot(  # noqa: PLR0913 - every argument narrows the series
         tuple(profiles),
         tuple(gaps),
         MarketView([*selected, *rate_records]),
-        reference,
+        ReferenceIndex.from_records(records),
     )

@@ -31,6 +31,9 @@ from auqua.contracts.events.lifecycle import (
     CorporateActionKind,
     CorporateActionV2,
     FxSettlement,
+    OptionAssignment,
+    OptionExercise,
+    OptionExpiry,
 )
 from auqua.contracts.events.market import Bar, SettlementPrice
 from auqua.contracts.events.reference import InstrumentDefined
@@ -638,6 +641,140 @@ def test_realized_pnl_is_proceeds_minus_relieved_cost() -> None:
     )
     assert scenario.realized(PERP, "BTC") == posted != 0
     assert (PERP, "BTC", posted) in scenario.state().realized
+
+
+def _option(  # noqa: PLR0913, PLR0917 - one contract, field by field
+    symbol: str,
+    right: OptionRight,
+    strike: str,
+    settlement: Settlement,
+    underlying_id: InstrumentId | None = None,
+    multiplier: str = "100",
+) -> Option:
+    return Option(
+        id=InstrumentId("OCC", symbol),
+        quote_currency="USD",
+        price_increment=CENT,
+        quantity_increment=Decimal(1),
+        multiplier=Decimal(multiplier),
+        underlying="AAPL",
+        right=right,
+        strike=Decimal(strike),
+        expiry_ns=ct(31, 15),
+        exercise_style=ExerciseStyle.AMERICAN,
+        settlement=settlement,
+        underlying_id=underlying_id,
+        **_identifiers(),
+    )
+
+
+def _defined(*instruments: AnyInstrument) -> list[Event]:
+    return [
+        InstrumentDefined(**_common(100 + n, ct(25, 0)), instrument=instrument)
+        for n, instrument in enumerate(instruments)
+    ]
+
+
+def _funded(n: int = 9) -> CashTransfer:
+    return CashTransfer(
+        **_common(n, ct(25, 1)), currency="USD", amount=Decimal(100_000), reference="t"
+    )
+
+
+def test_option_expiry_realizes_the_premium() -> None:
+    """Amendment 13 (T7): at expiry the holder loses the premium, the writer keeps it."""
+    held, written = (
+        _option("P1", OptionRight.PUT, "150", Settlement.CASH),
+        _option("P2", OptionRight.PUT, "140", Settlement.CASH),
+    )
+    events = [
+        *_defined(held, written),
+        _funded(),
+        _fill(30, held.id, Side.BUY, "2", "5.00", ct(26, 9)),  # 1,000 paid
+        _fill(31, written.id, Side.SELL, "1", "3.00", ct(26, 10)),  # 300 received
+        OptionExpiry(
+            **_common(40, ct(31, 16)), instrument_id=held.id, underlying_price=Decimal(160)
+        ),
+        OptionExpiry(
+            **_common(41, ct(31, 16)), instrument_id=written.id, underlying_price=Decimal(160)
+        ),
+    ]
+    portfolio = _fold(events)[0]
+    assert portfolio.realized(held.id, "USD") == Decimal(-1000)
+    assert portfolio.realized(written.id, "USD") == Decimal(300)
+    assert portfolio.quantity(held.id).is_zero()
+    assert portfolio.quantity(written.id).is_zero()
+
+
+def test_cash_settled_exercise_and_assignment_realize_the_settlement() -> None:
+    """Amendment 13 (T18): proceeds = the cash settlement amount (S = 110, K = 100, M = 100)."""
+    held, written = (
+        _option("C1", OptionRight.CALL, "100", Settlement.CASH),
+        _option("C2", OptionRight.CALL, "100", Settlement.CASH),
+    )
+    events = [
+        *_defined(held, written),
+        _funded(),
+        _fill(30, held.id, Side.BUY, "2", "4.00", ct(26, 9)),  # cost 800
+        _fill(31, written.id, Side.SELL, "1", "4.00", ct(26, 10)),  # 400 received
+        OptionExercise(
+            **_common(40, ct(27, 9)),
+            instrument_id=held.id,
+            quantity=Decimal(1),
+            exercise_settlement_value=Decimal(110),
+        ),
+        OptionAssignment(
+            **_common(41, ct(27, 9)),
+            instrument_id=written.id,
+            quantity=Decimal(1),
+            exercise_settlement_value=Decimal(110),
+        ),
+    ]
+    portfolio = _fold(events)[0]
+    assert portfolio.realized(held.id, "USD") == Decimal(600)  # 1,000 - 400 of cost
+    assert portfolio.realized(written.id, "USD") == Decimal(-600)  # 400 - 1,000
+    assert portfolio.quantity(held.id) == 1
+
+
+def test_physical_exercise_moves_the_option_cost_into_the_underlying() -> None:
+    """Amendment 13 (T7): a call bought adds its cost to the stock; sold, to the amount realized."""
+    bought = _option("C3", OptionRight.CALL, "200", Settlement.PHYSICAL, AAPL)
+    written = _option("C4", OptionRight.CALL, "200", Settlement.PHYSICAL, AAPL)
+    holder = [
+        *_defined(INSTRUMENTS[0], bought),
+        _funded(),
+        _fill(30, bought.id, Side.BUY, "1", "5.00", ct(26, 9)),  # cost 500
+        OptionExercise(**_common(40, ct(27, 9)), instrument_id=bought.id, quantity=Decimal(1)),
+        _fill(41, AAPL, Side.SELL, "100", "210.00", ct(27, 10)),
+    ]
+    portfolio = _fold(holder)[0]
+    assert portfolio.realized(bought.id, "USD") == 0
+    assert portfolio.realized(AAPL, "USD") == Decimal(500)  # 21,000 - (20,000 + 500)
+    writer = [
+        *_defined(INSTRUMENTS[0], written),
+        _funded(),
+        _fill(30, AAPL, Side.BUY, "100", "190.00", ct(26, 9)),  # cost 19,000
+        _fill(31, written.id, Side.SELL, "1", "5.00", ct(26, 10)),  # 500 received
+        OptionAssignment(**_common(40, ct(27, 9)), instrument_id=written.id, quantity=Decimal(1)),
+    ]
+    portfolio = _fold(writer)[0]
+    assert portfolio.realized(written.id, "USD") == 0
+    assert portfolio.realized(AAPL, "USD") == Decimal(1500)  # 20,000 + 500 - 19,000
+    assert portfolio.quantity(AAPL) == 0
+
+
+def test_physical_exercise_into_a_future_realizes_the_option_cost() -> None:
+    """Amendment 13: a future's P&L is its variation, so the option's cost is realized at once."""
+    option = _option("ESC", OptionRight.CALL, "4000", Settlement.PHYSICAL, ES, multiplier="1")
+    events = [
+        *_defined(INSTRUMENTS[1], option),
+        _funded(),
+        _fill(30, option.id, Side.BUY, "1", "10.00", ct(26, 9)),  # cost 10
+        OptionExercise(**_common(40, ct(26, 11)), instrument_id=option.id, quantity=Decimal(1)),
+    ]
+    portfolio = _fold(events)[0]
+    assert portfolio.realized(option.id, "USD") == Decimal(-10)
+    assert portfolio.quantity(ES) == 1
 
 
 def test_knowledge_time_selects_what_the_view_sees() -> None:

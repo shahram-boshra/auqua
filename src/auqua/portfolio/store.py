@@ -11,7 +11,8 @@ stored as their exact text, ``str(value)`` — the event codec's encoding
 (amendment 8, F-S; ADR 0034 records the exception to ADR 0023). Postings are
 stored with the balances; the balances must equal their sums (F-U). Projection
 schema 2 (amendment 12, F-AF) adds the realized P&L per (instrument,
-currency); a schema-1 projection is rebuilt.
+currency); schema 3 (amendment 13) realizes on every lot relief (option expiry
+and exercise); a projection of an earlier schema is rebuilt.
 
 At start the projection is valid only if (BP6 C8, D5): its schema, the
 configuration identity (ADR 0020 ``config_id``) and the code identifier it was
@@ -73,7 +74,7 @@ from auqua.storage.replay import EventLogReader
 from auqua.storage.store import StoreMigrations
 
 #: Version of the projection's tables and their meaning; another value → rebuild.
-PROJECTION_SCHEMA = "2"
+PROJECTION_SCHEMA = "3"
 
 _TABLES: tuple[tuple[str, str, str], ...] = (
     # (name, columns, order of the canonical content hash)

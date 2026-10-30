@@ -203,7 +203,12 @@ class Simulation:
             ConfigurationError: a currency or rate missing from the configuration.
         """
         if not isinstance(self.instrument, (CryptoSpot, FxPair, Equity, Option, Bond)):
-            raise EngineError(f"{self.instrument.id}: no research equity for this instrument")
+            kind = type(self.instrument).__name__
+            raise EngineError(
+                f"{self.instrument.id}: no research equity for a {kind} "
+                f"({self.instrument.asset_class.value}; its value is variation or coin P&L, "
+                "not quantity x close; BP6 R17)"
+            )
         allocation = self.settings.allocation
         if isinstance(allocation, FixedQuantitySpec):
             on_grid(allocation.quantity, self.instrument.quantity_increment)
